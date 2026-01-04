@@ -65,20 +65,22 @@ def _run_bbox3(
         res = subprocess.run(
             ["wsl", "-d", distro, "bash", "-lc", cmd],
             capture_output=True,
-            text=True,
+            text=False,
             timeout=timeout_sec,
         )
-        return (res.stdout or "") + (res.stderr or "")
+        out = (res.stdout or b"") + (res.stderr or b"")
+        return out.decode("utf-8", errors="replace")
 
     subprocess.run(["chmod", "+x", str(bbox3_path)], check=False)
     res = subprocess.run(
         [str(bbox3_path), "-n", str(n_value), "-r", str(r_value)],
         capture_output=True,
-        text=True,
+        text=False,
         timeout=timeout_sec,
         cwd=str(workdir),
     )
-    return (res.stdout or "") + (res.stderr or "")
+    out = (res.stdout or b"") + (res.stderr or b"")
+    return out.decode("utf-8", errors="replace")
 
 
 def _parse_bbox3_final_score(output: str) -> Optional[float]:
@@ -221,4 +223,3 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

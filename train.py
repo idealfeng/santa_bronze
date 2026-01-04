@@ -1016,6 +1016,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Merge one or more submissions by picking the best group from any input, then write to --out.",
     )
     parser.add_argument(
+        "--ensemble-dir",
+        default=None,
+        help="Recursively include all .csv under a directory for ensembling (optionally filtered by --ensemble-limit).",
+    )
+    parser.add_argument(
+        "--ensemble-limit",
+        type=int,
+        default=50,
+        help="With --ensemble-dir, only keep the best N submissions by fast score (default 50).",
+    )
+    parser.add_argument(
         "--fix-direction",
         action="store_true",
         help="Rotate each group globally to minimize its axis-aligned bounding square (works with --ensemble-in).",
@@ -1107,9 +1118,36 @@ def main(argv: Optional[List[str]] = None) -> int:
                     print(f"{i:02d}. invalid ({e})  {p}")
         return 0
 
-    if args.ensemble_in is not None:
+    if args.ensemble_in is not None or args.ensemble_dir is not None:
+        paths: List[str] = []
+        if args.ensemble_in is not None:
+            paths.extend(args.ensemble_in)
+        if args.ensemble_dir is not None:
+            root = Path(args.ensemble_dir)
+            csvs = _iter_submission_csvs(root)
+            scored = []
+            for p in csvs:
+                try:
+                    df0 = pd.read_csv(p, dtype=str)
+                    df0 = normalize_submission_df(df0, path_hint=str(p))
+                    scored.append((fast_score_submission(df0), str(p)))
+                except Exception:
+                    continue
+            scored.sort(key=lambda t: t[0])
+            limit = max(1, int(args.ensemble_limit))
+            paths.extend([p for _s, p in scored[:limit]])
+
+        # Dedupe while preserving order
+        seen = set()
+        uniq = []
+        for p in paths:
+            if p not in seen:
+                seen.add(p)
+                uniq.append(p)
+        paths = uniq
+
         df = ensemble_best_by_group(
-            args.ensemble_in,
+            paths,
             fix_direction=args.fix_direction,
             decimals=args.decimals,
             verbose=True,
