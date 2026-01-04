@@ -502,10 +502,7 @@ def _group_side_and_best_phi(df_group: pd.DataFrame, *, allow_rotate: bool) -> T
 
 def _read_submission_groups(path: str) -> Dict[str, pd.DataFrame]:
     df = pd.read_csv(path, dtype=str)
-    for c in ["id", "x", "y", "deg"]:
-        if c not in df.columns:
-            raise ValueError(f"{path}: missing column {c}. Found columns: {list(df.columns)}")
-    df = df[["id", "x", "y", "deg"]].copy()
+    df = normalize_submission_df(df, path_hint=path)
     df["_group"] = df["id"].astype(str).str.split("_").str[0]
     groups: Dict[str, pd.DataFrame] = {}
     for g, sub in df.groupby("_group", sort=True):
@@ -911,6 +908,83 @@ def score_submission(submission: pd.DataFrame) -> float:
     return float(total)
 
 
+def fast_score_submission(submission: pd.DataFrame) -> float:
+    npx = _require_numpy()
+
+    df = submission.copy()
+    if "id" in df.columns:
+        ids = df["id"].astype(str)
+    else:
+        ids = df.index.astype(str)
+        df = df.reset_index(drop=True)
+
+    for c in ["x", "y", "deg"]:
+        df[c] = df[c].astype(str).str.strip()
+
+    x = _parse_s_floats(df["x"])
+    y = _parse_s_floats(df["y"])
+    deg = _parse_s_floats(df["deg"])
+
+    groups = ids.str.split("_").str[0].to_numpy(dtype=object, copy=False)
+    # Sort once so each group's rows are contiguous (fast slicing).
+    order = npx.argsort(groups, kind="stable")
+    groups = groups[order]
+    x = x[order]
+    y = y[order]
+    deg = deg[order]
+
+    # Find group boundaries.
+    change = npx.nonzero(groups[1:] != groups[:-1])[0] + 1
+    starts = npx.concatenate([npx.array([0], dtype=npx.int64), change])
+    ends = npx.concatenate([change, npx.array([len(groups)], dtype=npx.int64)])
+
+    total = 0.0
+    for s, e in zip(starts.tolist(), ends.tolist()):
+        n = e - s
+        X, Y = _tree_pointcloud_xy(x[s:e], y[s:e], deg[s:e])
+        side = _side_from_points(X, Y)
+        total += (side * side) / float(n)
+    return float(total)
+
+
+def _iter_submission_csvs(root: Path) -> List[Path]:
+    if root.is_file():
+        return [root]
+    return sorted([p for p in root.rglob("*.csv") if p.is_file()])
+
+
+def normalize_submission_df(df: pd.DataFrame, *, path_hint: str = "<dataframe>") -> pd.DataFrame:
+    cols = {c.lower(): c for c in df.columns}
+
+    id_col = cols.get("id")
+    if id_col is None:
+        raise ValueError(f"{path_hint}: missing id column. Found columns: {list(df.columns)}")
+
+    def pick(cands: List[str]) -> Optional[str]:
+        for c in cands:
+            if c in cols:
+                return cols[c]
+        return None
+
+    x_col = pick(["x", "pos_x", "px"])
+    y_col = pick(["y", "pos_y", "py"])
+    deg_col = pick(["deg", "angle", "rotation", "theta"])
+    if x_col is None or y_col is None or deg_col is None:
+        raise ValueError(
+            f"{path_hint}: cannot find x/y/deg columns. Found columns: {list(df.columns)}"
+        )
+
+    out = df[[id_col, x_col, y_col, deg_col]].copy()
+    out.columns = ["id", "x", "y", "deg"]
+
+    for c in ["x", "y", "deg"]:
+        s = out[c].astype(str).str.strip()
+        s = s.where(s.str.startswith("s"), "s" + s)
+        out[c] = s
+
+    return out[["id", "x", "y", "deg"]]
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -922,6 +996,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--score-file",
         default=None,
         help="Score an existing submission CSV (id,x,y,deg with 's' prefixes) and exit.",
+    )
+    parser.add_argument(
+        "--score-dir",
+        default=None,
+        help="Score every .csv under a directory (fast bbox-only scoring, no overlap validation).",
+    )
+    parser.add_argument("--top", type=int, default=20, help="With --score-dir, show top N results (default 20).")
+    parser.add_argument(
+        "--validate-top",
+        type=int,
+        default=5,
+        help="With --score-dir, also run full overlap-validating score on top K (default 5).",
     )
     parser.add_argument(
         "--ensemble-in",
@@ -968,8 +1054,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         raise SystemExit("--nmax must be in [1, 200].")
 
     if args.clean_in is not None:
-        src = pd.read_csv(args.clean_in)
-        df = src[["id", "x", "y", "deg"]].copy()
+        src = pd.read_csv(args.clean_in, dtype=str)
+        df = normalize_submission_df(src, path_hint=str(args.clean_in))
         out_path = Path(args.out)
         df.to_csv(out_path, index=False)
         print(f"Wrote {out_path} (rows={len(df)})")
@@ -978,9 +1064,47 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     if args.score_file is not None:
-        df = pd.read_csv(args.score_file)
-        df = df[["id", "x", "y", "deg"]].copy()
+        df = pd.read_csv(args.score_file, dtype=str)
+        df = normalize_submission_df(df, path_hint=str(args.score_file))
         print(f"Score: {score_submission(df):.12f}")
+        return 0
+
+    if args.score_dir is not None:
+        root = Path(args.score_dir)
+        paths = _iter_submission_csvs(root)
+        if not paths:
+            raise SystemExit(f"No .csv files under: {root}")
+
+        results = []
+        for p in paths:
+            try:
+                df = pd.read_csv(p, dtype=str)
+                df = normalize_submission_df(df, path_hint=str(p))
+                s_fast = fast_score_submission(df)
+                results.append((s_fast, str(p)))
+            except Exception:
+                continue
+
+        if not results:
+            raise SystemExit(f"No scorable submissions under: {root}")
+
+        results.sort(key=lambda t: t[0])
+        top_n = max(1, int(args.top))
+        print(f"Found {len(results)} scorable CSVs. Top {min(top_n, len(results))}:")
+        for i, (s_fast, p) in enumerate(results[:top_n], 1):
+            print(f"{i:02d}. {s_fast:.12f}  {p}")
+
+        k = max(0, int(args.validate_top))
+        if k:
+            print(f"\nValidating top {min(k, len(results))} with overlap checks:")
+            for i, (s_fast, p) in enumerate(results[: min(k, len(results))], 1):
+                df = pd.read_csv(p, dtype=str)
+                df = normalize_submission_df(df, path_hint=str(p))
+                try:
+                    s_full = score_submission(df)
+                    print(f"{i:02d}. full={s_full:.12f} (fast={s_fast:.12f})  {p}")
+                except Exception as e:
+                    print(f"{i:02d}. invalid ({e})  {p}")
         return 0
 
     if args.ensemble_in is not None:
