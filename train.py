@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import math
 import random
+import time
 from dataclasses import dataclass
 from decimal import Decimal, getcontext
 from pathlib import Path
@@ -42,6 +43,7 @@ XY_MIN, XY_MAX = -100.0, 100.0
 # Match public metric (santa-2025-metric.ipynb)
 getcontext().prec = 25
 SCALE_FACTOR = Decimal("1e18")
+SCALE = float(SCALE_FACTOR)
 
 # Fixed tree bounds (unscaled) for common angles used in grid layouts.
 # These are exact for 0/180 since the widest point is base_w/2=0.35 at y=0,
@@ -69,6 +71,13 @@ TREE_VERTS: Tuple[Tuple[float, float], ...] = (
     (-0.0625, 0.5),
     (-0.125, 0.5),
 )
+
+_TREE_POLY_SCALED = Polygon([(vx * SCALE, vy * SCALE) for vx, vy in TREE_VERTS])
+
+
+def _tree_polygon_scaled(x: float, y: float, deg: float) -> Polygon:
+    rotated = affinity.rotate(_TREE_POLY_SCALED, float(deg), origin=(0, 0))
+    return affinity.translate(rotated, xoff=float(x) * SCALE, yoff=float(y) * SCALE)
 
 
 def _bounds_for_fixed_angles(placements: List[Tuple[float, float, float]]) -> Tuple[float, float, float, float]:
@@ -671,6 +680,221 @@ def apply_fix_direction(df: pd.DataFrame, *, decimals: int = 12) -> pd.DataFrame
     return pd.concat(fixed, ignore_index=True).sort_values("id").reset_index(drop=True)
 
 
+def _group_side(df_group: pd.DataFrame) -> float:
+    x = _parse_s_floats(df_group["x"])
+    y = _parse_s_floats(df_group["y"])
+    deg = _parse_s_floats(df_group["deg"])
+    X, Y = _tree_pointcloud_xy(x, y, deg)
+    return _side_from_points(X, Y)
+
+
+def _group_score(df_group: pd.DataFrame) -> float:
+    side = _group_side(df_group)
+    n = max(1, len(df_group))
+    return (side * side) / float(n)
+
+
+def _sa_optimize_group(
+    df_group: pd.DataFrame,
+    *,
+    steps: int,
+    restarts: int,
+    t0: float,
+    alpha: float,
+    move_xy: float,
+    move_deg: float,
+    decimals: int,
+    seed: int,
+    verbose: bool,
+) -> pd.DataFrame:
+    if steps <= 0:
+        return df_group
+
+    decimals = max(16, int(decimals))
+    g0 = df_group[["id", "x", "y", "deg"]].copy().reset_index(drop=True)
+    x0 = _parse_s_floats(g0["x"])
+    y0 = _parse_s_floats(g0["y"])
+    deg0 = _parse_s_floats(g0["deg"])
+
+    best_x = x0.copy()
+    best_y = y0.copy()
+    best_deg = deg0.copy()
+    start_side = _group_side(g0)
+    best_side = start_side
+
+    # Pre-build polygons for fast overlap tests. Scaled geometry matches the metric.
+    polys0 = [_tree_polygon_scaled(float(x0[i]), float(y0[i]), float(deg0[i])) for i in range(len(g0))]
+
+    for r in range(max(1, int(restarts))):
+        rng = random.Random(seed + r * 1_000_003)
+
+        x = best_x.copy()
+        y = best_y.copy()
+        deg = best_deg.copy()
+        polys = list(polys0) if r == 0 else [_tree_polygon_scaled(float(x[i]), float(y[i]), float(deg[i])) for i in range(len(g0))]
+
+        cur_side = _side_from_points(*_tree_pointcloud_xy(x, y, deg))
+        temp = max(1e-9, float(t0))
+        t0_eff = temp
+        accepted = 0
+        feasible = 0
+
+        for _step in range(int(steps)):
+            i = rng.randrange(len(g0))
+
+            # Occasional big kick helps escape a tiny local basin.
+            kick = 5.0 if rng.random() < 0.02 else 1.0
+            scale = max(0.15, temp / t0_eff) * kick
+
+            do_move = rng.random() < 0.85
+            do_rot = rng.random() < 0.60
+            if not (do_move or do_rot):
+                do_move = True
+
+            nx = float(x[i])
+            ny = float(y[i])
+            na = float(deg[i])
+
+            if do_move:
+                nx += (rng.random() * 2.0 - 1.0) * move_xy * scale
+                ny += (rng.random() * 2.0 - 1.0) * move_xy * scale
+                nx = min(XY_MAX, max(XY_MIN, nx))
+                ny = min(XY_MAX, max(XY_MIN, ny))
+            if do_rot:
+                na = (na + (rng.random() * 2.0 - 1.0) * move_deg * scale) % 360.0
+
+            cand_poly = _tree_polygon_scaled(nx, ny, na)
+            ok = True
+            for j, other in enumerate(polys):
+                if j == i:
+                    continue
+                if cand_poly.intersects(other) and not cand_poly.touches(other):
+                    ok = False
+                    break
+            if not ok:
+                temp *= alpha
+                continue
+
+            feasible += 1
+            ox, oy, oa = float(x[i]), float(y[i]), float(deg[i])
+
+            x[i] = nx
+            y[i] = ny
+            deg[i] = na
+            new_side = _side_from_points(*_tree_pointcloud_xy(x, y, deg))
+            delta = new_side - cur_side
+
+            accept = delta <= 0.0 or rng.random() < math.exp(-delta / max(1e-9, temp))
+            if accept:
+                accepted += 1
+                cur_side = new_side
+                polys[i] = cand_poly
+                if cur_side < best_side:
+                    best_side = cur_side
+                    best_x = x.copy()
+                    best_y = y.copy()
+                    best_deg = deg.copy()
+            else:
+                x[i] = ox
+                y[i] = oy
+                deg[i] = oa
+
+            temp *= alpha
+
+        if verbose:
+            ar = accepted / max(1, steps)
+            fr = feasible / max(1, steps)
+            print(
+                f"  restart {r+1}/{max(1,int(restarts))}: best_side={best_side:.6f} accept={ar:.2%} feasible={fr:.2%}"
+            )
+
+    if best_side >= start_side - 1e-12:
+        return g0
+
+    out = g0.copy()
+    out["x"] = [_format_s_prec(float(v), decimals=decimals) for v in best_x.tolist()]
+    out["y"] = [_format_s_prec(float(v), decimals=decimals) for v in best_y.tolist()]
+    out["deg"] = [_format_s_prec(float(v) % 360.0, decimals=decimals) for v in best_deg.tolist()]
+    return out
+
+
+def optimize_small_groups_sa(
+    df: pd.DataFrame,
+    *,
+    nmax: int,
+    top: int,
+    steps: int,
+    restarts: int,
+    t0: float,
+    alpha: float,
+    move_xy: float,
+    move_deg: float,
+    seed: int,
+    decimals: int,
+    fix_direction: bool,
+    verbose: bool,
+) -> pd.DataFrame:
+    if nmax <= 0:
+        return df
+
+    decimals = max(16, int(decimals))
+    tmp = df[["id", "x", "y", "deg"]].copy()
+    tmp["_group"] = tmp["id"].astype(str).str.split("_").str[0]
+    groups: Dict[int, pd.DataFrame] = {}
+    for g, sub in tmp.groupby("_group", sort=True):
+        groups[int(g)] = sub.sort_values("id").reset_index(drop=True)[["id", "x", "y", "deg"]]
+
+    candidates = [g for g in groups.keys() if 1 <= g <= nmax]
+    if not candidates:
+        return df
+
+    if top and top > 0:
+        ranked = [(g, _group_score(groups[g])) for g in candidates]
+        ranked.sort(key=lambda t: t[1], reverse=True)
+        candidates = [g for g, _s in ranked[: min(top, len(ranked))]]
+
+    candidates = sorted(candidates)
+    if verbose:
+        print(f"SA optimizing groups: {candidates[0]}..{candidates[-1]} (count={len(candidates)})")
+
+    start = time.time()
+    for g in candidates:
+        gdf = groups[g]
+        before_side = _group_side(gdf)
+        before_score = (before_side * before_side) / float(len(gdf))
+        if verbose:
+            print(f"n={g:03d}: start side={before_side:.6f} score={before_score:.6f}")
+
+        opt = _sa_optimize_group(
+            gdf,
+            steps=steps,
+            restarts=restarts,
+            t0=t0,
+            alpha=alpha,
+            move_xy=move_xy,
+            move_deg=move_deg,
+            decimals=decimals,
+            seed=seed + g * 10_000,
+            verbose=verbose,
+        )
+        if fix_direction:
+            _side, phi = _group_side_and_best_phi(opt, allow_rotate=True)
+            if phi != 0.0:
+                opt = _rotate_group_df(opt, phi, decimals=decimals)
+
+        after_side = _group_side(opt)
+        after_score = (after_side * after_side) / float(len(opt))
+        if verbose:
+            dt = (time.time() - start) / 60.0
+            print(
+                f"n={g:03d}: done side={after_side:.6f} score={after_score:.6f} (delta={after_score-before_score:+.6f}) t={dt:.1f}m"
+            )
+        groups[g] = opt
+
+    out = pd.concat([groups[g] for g in sorted(groups.keys())], ignore_index=True).sort_values("id").reset_index(drop=True)
+    return out[["id", "x", "y", "deg"]]
+
+
 def build_submission_greedy_prefix(n_max: int, *, seed: int, attempts: int) -> pd.DataFrame:
     random.seed(seed)
 
@@ -1039,8 +1263,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--decimals",
         type=int,
-        default=12,
-        help="When writing optimized values, number of decimals to keep (default 12).",
+        default=16,
+        help="When writing optimized values, number of decimals to keep (default 16).",
     )
     parser.add_argument("--out", default="submission.csv", help="Output CSV path.")
     parser.add_argument(
@@ -1059,6 +1283,35 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--nmax", type=int, default=200, help="Max trees (default 200).")
     parser.add_argument("--attempts", type=int, default=10, help="Attempts per added tree.")
     parser.add_argument("--score", action="store_true", help="Compute and print the metric score locally.")
+    parser.add_argument(
+        "--opt-small-in",
+        default=None,
+        help="Run simulated annealing (SA) to optimize small groups of an existing submission, then write to --out.",
+    )
+    parser.add_argument("--opt-small-nmax", type=int, default=30, help="With --opt-small-in, optimize groups 1..N.")
+    parser.add_argument(
+        "--opt-small-top",
+        type=int,
+        default=0,
+        help="With --opt-small-in, only optimize the worst top-K groups (by group score). 0 = all in 1..N.",
+    )
+    parser.add_argument("--opt-small-steps", type=int, default=10_000, help="SA steps per group (default 10000).")
+    parser.add_argument("--opt-small-restarts", type=int, default=1, help="SA restarts per group (default 1).")
+    parser.add_argument("--opt-small-t0", type=float, default=0.05, help="SA initial temperature (default 0.05).")
+    parser.add_argument("--opt-small-alpha", type=float, default=0.9995, help="SA cooling factor (default 0.9995).")
+    parser.add_argument(
+        "--opt-small-move-xy",
+        type=float,
+        default=0.05,
+        help="Max translation delta for a move (default 0.05).",
+    )
+    parser.add_argument(
+        "--opt-small-move-deg",
+        type=float,
+        default=8.0,
+        help="Max rotation delta (degrees) for a move (default 8.0).",
+    )
+    parser.add_argument("--opt-small-quiet", action="store_true", help="Reduce SA logging.")
     args = parser.parse_args(argv)
 
     if not (1 <= args.nmax <= 200):
@@ -1116,6 +1369,38 @@ def main(argv: Optional[List[str]] = None) -> int:
                     print(f"{i:02d}. full={s_full:.12f} (fast={s_fast:.12f})  {p}")
                 except Exception as e:
                     print(f"{i:02d}. invalid ({e})  {p}")
+        return 0
+
+    if args.opt_small_in is not None:
+        src = pd.read_csv(args.opt_small_in, dtype=str)
+        df = normalize_submission_df(src, path_hint=str(args.opt_small_in))
+        df = optimize_small_groups_sa(
+            df,
+            nmax=int(args.opt_small_nmax),
+            top=int(args.opt_small_top),
+            steps=int(args.opt_small_steps),
+            restarts=int(args.opt_small_restarts),
+            t0=float(args.opt_small_t0),
+            alpha=float(args.opt_small_alpha),
+            move_xy=float(args.opt_small_move_xy),
+            move_deg=float(args.opt_small_move_deg),
+            seed=int(args.seed),
+            decimals=int(args.decimals),
+            fix_direction=bool(args.fix_direction),
+            verbose=not bool(args.opt_small_quiet),
+        )
+        if args.delete_propagate:
+            groups = _submission_df_to_groups(df)
+            groups = _delete_propagate_groups(groups, verbose=True)
+            df = _groups_to_submission_df(groups)
+            if args.fix_direction:
+                df = apply_fix_direction(df, decimals=args.decimals)
+
+        out_path = Path(args.out)
+        df.to_csv(out_path, index=False)
+        print(f"Wrote {out_path} (rows={len(df)})")
+        if args.score:
+            print(f"Score: {score_submission(df):.12f}")
         return 0
 
     if args.ensemble_in is not None or args.ensemble_dir is not None:
