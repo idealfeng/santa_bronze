@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -52,7 +53,8 @@ def _run_bbox3(
     r_value: int,
     timeout_sec: int,
     wsl_distro: Optional[str],
-) -> str:
+    omp_threads: Optional[int],
+) -> tuple[int, str]:
     bbox3_path = workdir / "bbox3"
     if sys.platform.startswith("win"):
         distro = _detect_wsl_distro(wsl_distro)
@@ -61,7 +63,8 @@ def _run_bbox3(
                 "No usable WSL distro found. Install Ubuntu (WSL) and retry, or pass --wsl-distro."
             )
         workdir_wsl = _windows_to_wsl_path(workdir)
-        cmd = f"cd {workdir_wsl} && chmod +x ./bbox3 && ./bbox3 -n {n_value} -r {r_value}"
+        omp_prefix = f"OMP_NUM_THREADS={int(omp_threads)} " if omp_threads else ""
+        cmd = f"cd {workdir_wsl} && chmod +x ./bbox3 && {omp_prefix}./bbox3 -n {n_value} -r {r_value}"
         res = subprocess.run(
             ["wsl", "-d", distro, "bash", "-lc", cmd],
             capture_output=True,
@@ -69,18 +72,23 @@ def _run_bbox3(
             timeout=timeout_sec,
         )
         out = (res.stdout or b"") + (res.stderr or b"")
-        return out.decode("utf-8", errors="replace")
+        return int(res.returncode), out.decode("utf-8", errors="ignore")
 
     subprocess.run(["chmod", "+x", str(bbox3_path)], check=False)
+    env = None
+    if omp_threads:
+        env = os.environ.copy()
+        env["OMP_NUM_THREADS"] = str(int(omp_threads))
     res = subprocess.run(
         [str(bbox3_path), "-n", str(n_value), "-r", str(r_value)],
         capture_output=True,
         text=False,
         timeout=timeout_sec,
         cwd=str(workdir),
+        env=env,
     )
     out = (res.stdout or b"") + (res.stderr or b"")
-    return out.decode("utf-8", errors="replace")
+    return int(res.returncode), out.decode("utf-8", errors="ignore")
 
 
 def _parse_bbox3_final_score(output: str) -> Optional[float]:
@@ -91,6 +99,13 @@ def _parse_bbox3_final_score(output: str) -> Optional[float]:
 def _load_submission(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path, dtype=str)
     return df[["id", "x", "y", "deg"]].copy()
+
+
+def _atomic_write_csv(df: pd.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    df.to_csv(tmp, index=False)
+    tmp.replace(path)
 
 
 def _group_map(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
@@ -143,6 +158,12 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     p.add_argument("--timeout", type=int, default=600, help="Per-run timeout seconds (default 600).")
     p.add_argument("--rounds", type=int, default=30, help="How many runs to attempt (default 30).")
+    p.add_argument(
+        "--omp-threads",
+        type=int,
+        default=None,
+        help="Limit OpenMP threads for bbox3 (helps control temperature when running multiple workers).",
+    )
     p.add_argument("--n", nargs="+", type=int, default=[1200, 1500, 1800, 2000], help="bbox3 -n values.")
     p.add_argument("--r", nargs="+", type=int, default=[30, 60, 90], help="bbox3 -r values.")
     p.add_argument("--fix-direction", action="store_true", help="Apply train.py fix-direction after each bbox3 run.")
@@ -156,15 +177,34 @@ def main(argv: Optional[list[str]] = None) -> int:
     workdir = Path(args.workdir)
     workdir.mkdir(parents=True, exist_ok=True)
 
+    out_path = Path(args.out)
+
     # Prepare working files
     shutil.copy2(bbox3_src, workdir / "bbox3")
-    shutil.copy2(input_path, workdir / "submission.csv")
 
     donor_df = _load_submission(donor_path)
-    best_df = _load_submission(workdir / "submission.csv")
-    best_score = train.score_submission(best_df)
-    out_path = Path(args.out)
-    best_df.to_csv(out_path, index=False)
+
+    input_df = _load_submission(input_path)
+    input_score = train.score_submission(input_df)
+    best_df = input_df
+    best_score = input_score
+
+    # Resume from an existing --out if it's better than --input (helps when you stop/restart runs).
+    if out_path.exists():
+        try:
+            prev_df = _load_submission(out_path)
+            prev_score = train.score_submission(prev_df)
+            if prev_score <= best_score:
+                best_df = prev_df
+                best_score = prev_score
+                print(
+                    f"Resuming from existing {out_path} score={prev_score:.12f} (input {input_score:.12f})"
+                )
+        except Exception as e:
+            print(f"Warning: failed to resume from {out_path}: {e}")
+
+    _atomic_write_csv(best_df, out_path)
+    _atomic_write_csv(best_df, workdir / "submission.csv")
 
     combos = [(n, r) for n in args.n for r in args.r]
     print(f"Start score: {best_score:.12f} | combos={len(combos)} | rounds={args.rounds}")
@@ -175,20 +215,34 @@ def main(argv: Optional[list[str]] = None) -> int:
         shutil.copy2(out_path, workdir / "submission.csv")
 
         try:
-            output = _run_bbox3(
+            rc, output = _run_bbox3(
                 workdir=workdir,
                 n_value=n_value,
                 r_value=r_value,
                 timeout_sec=args.timeout,
                 wsl_distro=args.wsl_distro,
+                omp_threads=args.omp_threads,
             )
         except subprocess.TimeoutExpired:
             print(f"[{k+1:03d}] TIMEOUT n={n_value} r={r_value}")
             continue
 
+        if rc != 0:
+            head = "\n".join((output or "").splitlines()[:20])
+            print(f"[{k+1:03d}] bbox3 FAILED (rc={rc}) n={n_value} r={r_value}\n{head}")
+            if "libgomp.so.1" in output or "error while loading shared libraries" in output:
+                print(
+                    "\nUbuntu 里缺少 OpenMP 运行库。请在 Ubuntu 终端执行：\n"
+                    "  sudo apt update\n"
+                    "  sudo apt install -y libgomp1\n"
+                )
+            return 2
+
         reported = _parse_bbox3_final_score(output)
-        if reported is not None and reported >= best_score:
-            print(f"[{k+1:03d}] skip n={n_value} r={r_value} (bbox3 {reported:.12f} >= best {best_score:.12f})")
+        if reported is not None and reported >= best_score and not (args.delete_propagate or args.fix_direction):
+            print(
+                f"[{k+1:03d}] skip n={n_value} r={r_value} (bbox3 {reported:.12f} >= best {best_score:.12f})"
+            )
             continue
 
         cand_df = _load_submission(workdir / "submission.csv")
@@ -210,7 +264,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         if cand_score < best_score:
             best_score = cand_score
             best_df = cand_df
-            best_df.to_csv(out_path, index=False)
+            _atomic_write_csv(best_df, out_path)
             print(
                 f"[{k+1:03d}] NEW BEST {best_score:.12f} (n={n_value} r={r_value}) t={dt/60:.1f}m"
             )

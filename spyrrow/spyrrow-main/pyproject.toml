@@ -1,0 +1,30 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "spyrrow"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+authors = [ {name = "Paul Durand-Lupinski", email = "paul.durand-lupinski@reeverse-systems.com"}]
+license = { file = "LICENSE.txt" }
+dynamic = ["version"]
+
+[project.urls]
+documentation = "https://spyrrow.readthedocs.io/"
+source = "https://github.com/PaulDL-RS/spyrrow"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-xdist>=3.8.0",
+    "ruff",
+    "sphinx>=8.1.3",
+]
