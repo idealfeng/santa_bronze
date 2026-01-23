@@ -117,6 +117,46 @@ def _group_map(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     return out
 
 
+def _fast_group_score_map(df: pd.DataFrame) -> Dict[str, float]:
+    npx = train._require_numpy()
+
+    tmp = df[["id", "x", "y", "deg"]].copy()
+    tmp["_group"] = tmp["id"].astype(str).str.split("_").str[0]
+
+    out: Dict[str, float] = {}
+    for g, sub in tmp.groupby("_group", sort=True):
+        x = train._parse_s_floats(sub["x"])
+        y = train._parse_s_floats(sub["y"])
+        deg = train._parse_s_floats(sub["deg"])
+        X, Y = train._tree_pointcloud_xy(x, y, deg)
+        side = train._side_from_points(X, Y)
+        n = max(1, len(sub))
+        out[str(g)] = float((side * side) / float(n))
+
+    # Ensure stable ordering isn't required by caller
+    _ = npx  # silence unused if train._require_numpy() is optimized away
+    return out
+
+
+def _prune_stash_dir(stash_dir: Path, *, keep: int) -> None:
+    if keep <= 0:
+        return
+    paths = sorted([p for p in stash_dir.glob("*.csv") if p.is_file()])
+    if len(paths) <= keep:
+        return
+
+    def score_key(p: Path) -> float:
+        m = re.search(r"_s([0-9]+(?:\\.[0-9]+)?)", p.name)
+        return float(m.group(1)) if m else float("inf")
+
+    paths.sort(key=score_key)
+    for p in paths[keep:]:
+        try:
+            p.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def _repair_by_donor(candidate: pd.DataFrame, donor: pd.DataFrame, *, max_repairs: int = 50) -> pd.DataFrame:
     donor_groups = _group_map(donor)
     fixed = candidate.copy()
@@ -168,7 +208,49 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--r", nargs="+", type=int, default=[30, 60, 90], help="bbox3 -r values.")
     p.add_argument("--fix-direction", action="store_true", help="Apply train.py fix-direction after each bbox3 run.")
     p.add_argument("--delete-propagate", action="store_true", help="Apply train.py delete-propagate after each run.")
+    p.add_argument("--insert-propagate", action="store_true", help="Apply train.py insert-propagate after each run.")
+    p.add_argument(
+        "--insert-propagate-nmax",
+        type=int,
+        default=60,
+        help="With --insert-propagate, only attempt groups up to this n (default 60).",
+    )
+    p.add_argument(
+        "--insert-propagate-topk",
+        type=int,
+        default=5,
+        help="With --insert-propagate, validate up to top-K candidate inserts per group (default 5).",
+    )
+    p.add_argument(
+        "--decimals",
+        type=int,
+        default=16,
+        help="Decimals for fix-direction output rounding (default 16).",
+    )
     p.add_argument("--out", default="submission_bbox3_best.csv", help="Where to write the best found submission.")
+    p.add_argument(
+        "--stash-dir",
+        default=None,
+        help="Optional directory to save extra valid candidates (useful for later ensembling).",
+    )
+    p.add_argument(
+        "--stash-every",
+        type=int,
+        default=0,
+        help="If >0, also stash every N rounds (default 0 = never).",
+    )
+    p.add_argument(
+        "--stash-keep",
+        type=int,
+        default=200,
+        help="Max number of stashed CSVs to keep (default 200).",
+    )
+    p.add_argument(
+        "--stash-min-improve",
+        type=float,
+        default=1e-10,
+        help="Minimum per-group score improvement to consider a group improved for stashing (default 1e-10).",
+    )
     args = p.parse_args(argv)
 
     input_path = Path(args.input)
@@ -188,6 +270,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     input_score = train.score_submission(input_df)
     best_df = input_df
     best_score = input_score
+    best_group_scores = _fast_group_score_map(best_df)
 
     # Resume from an existing --out if it's better than --input (helps when you stop/restart runs).
     if out_path.exists():
@@ -197,6 +280,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             if prev_score <= best_score:
                 best_df = prev_df
                 best_score = prev_score
+                best_group_scores = _fast_group_score_map(best_df)
                 print(
                     f"Resuming from existing {out_path} score={prev_score:.12f} (input {input_score:.12f})"
                 )
@@ -205,6 +289,10 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     _atomic_write_csv(best_df, out_path)
     _atomic_write_csv(best_df, workdir / "submission.csv")
+
+    stash_dir = Path(args.stash_dir) if args.stash_dir else None
+    if stash_dir is not None:
+        stash_dir.mkdir(parents=True, exist_ok=True)
 
     combos = [(n, r) for n in args.n for r in args.r]
     print(f"Start score: {best_score:.12f} | combos={len(combos)} | rounds={args.rounds}")
@@ -239,7 +327,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 2
 
         reported = _parse_bbox3_final_score(output)
-        if reported is not None and reported >= best_score and not (args.delete_propagate or args.fix_direction):
+        if reported is not None and reported >= best_score and not (
+            args.delete_propagate or args.insert_propagate or args.fix_direction
+        ):
             print(
                 f"[{k+1:03d}] skip n={n_value} r={r_value} (bbox3 {reported:.12f} >= best {best_score:.12f})"
             )
@@ -250,8 +340,17 @@ def main(argv: Optional[list[str]] = None) -> int:
             groups = train._submission_df_to_groups(cand_df)
             groups = train._delete_propagate_groups(groups, verbose=False)
             cand_df = train._groups_to_submission_df(groups)
+        if args.insert_propagate:
+            groups = train._submission_df_to_groups(cand_df)
+            groups = train._insert_propagate_groups(
+                groups,
+                nmax=int(args.insert_propagate_nmax),
+                topk=int(args.insert_propagate_topk),
+                verbose=False,
+            )
+            cand_df = train._groups_to_submission_df(groups)
         if args.fix_direction:
-            cand_df = train.apply_fix_direction(cand_df, decimals=12)
+            cand_df = train.apply_fix_direction(cand_df, decimals=int(args.decimals))
 
         try:
             cand_df = _repair_by_donor(cand_df, donor_df)
@@ -261,15 +360,42 @@ def main(argv: Optional[list[str]] = None) -> int:
             continue
 
         dt = time.time() - start
+
+        improved_groups = 0
+        if stash_dir is not None:
+            try:
+                cand_group_scores = _fast_group_score_map(cand_df)
+                for g, s in cand_group_scores.items():
+                    prev = best_group_scores.get(g)
+                    if prev is None:
+                        continue
+                    if s < prev - float(args.stash_min_improve):
+                        improved_groups += 1
+            except Exception:
+                improved_groups = 0
+
         if cand_score < best_score:
             best_score = cand_score
             best_df = cand_df
+            best_group_scores = _fast_group_score_map(best_df)
             _atomic_write_csv(best_df, out_path)
             print(
                 f"[{k+1:03d}] NEW BEST {best_score:.12f} (n={n_value} r={r_value}) t={dt/60:.1f}m"
             )
         else:
             print(f"[{k+1:03d}] keep {best_score:.12f} (cand {cand_score:.12f}) n={n_value} r={r_value}")
+
+        if stash_dir is not None:
+            do_stash = False
+            if improved_groups > 0:
+                do_stash = True
+            elif int(args.stash_every) > 0 and ((k + 1) % int(args.stash_every) == 0):
+                do_stash = True
+
+            if do_stash:
+                name = f"cand_{k+1:04d}_s{cand_score:.12f}_g{improved_groups:03d}_n{n_value}_r{r_value}.csv"
+                _atomic_write_csv(cand_df, stash_dir / name)
+                _prune_stash_dir(stash_dir, keep=int(args.stash_keep))
 
     print(f"Done. Best: {best_score:.12f} -> {out_path}")
     return 0

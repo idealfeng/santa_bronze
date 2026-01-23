@@ -9,6 +9,11 @@ param(
     [int]$RoundsDeep = 300,
     [int]$TimeoutDeep = 2400,
     [int]$StatusIntervalSec = 30,
+    [string]$StashRoot = "stash",
+    [int]$StashEvery = 0,
+    [int]$StashKeep = 200,
+    [double]$StashMinImprove = 1e-10,
+    [int]$Decimals = 16,
     [ValidateSet("Normal", "BelowNormal", "Idle", "AboveNormal", "High", "RealTime")]
     [string]$Priority = "BelowNormal",
     [string]$SleepAfter = "false"
@@ -64,11 +69,23 @@ function Start-BBox3Worker {
         "--rounds", $Rounds.ToString(),
         "--timeout", $Timeout.ToString(),
         "--omp-threads", $OmpThreads.ToString(),
+        "--decimals", $Decimals.ToString(),
         "--n"
     ) + ($NValues | ForEach-Object { $_.ToString() }) + @("--r") + ($RValues | ForEach-Object { $_.ToString() }) + @(
         "--fix-direction",
         "--delete-propagate"
     )
+
+    $stashNorm = $StashRoot
+    if (-not [string]::IsNullOrWhiteSpace($stashNorm)) {
+        $stashDir = Join-Path $ProjectDir (Join-Path $stashNorm $Name)
+        $bbox3Args += @(
+            "--stash-dir", $stashDir,
+            "--stash-every", $StashEvery.ToString(),
+            "--stash-keep", $StashKeep.ToString(),
+            "--stash-min-improve", $StashMinImprove.ToString("G17")
+        )
+    }
 
     $stdout = Join-Path $runDir ($Name + ".out.log")
     $stderr = Join-Path $runDir ($Name + ".err.log")

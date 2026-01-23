@@ -649,6 +649,88 @@ def _delete_propagate_groups(groups: Dict[int, pd.DataFrame], *, verbose: bool =
     return groups
 
 
+def _group_has_overlap(df_group: pd.DataFrame) -> bool:
+    g = df_group.reset_index(drop=True)
+    x = _parse_s_floats(g["x"])
+    y = _parse_s_floats(g["y"])
+    deg = _parse_s_floats(g["deg"])
+    polys = [_tree_polygon_scaled(float(x[i]), float(y[i]), float(deg[i])) for i in range(len(g))]
+    r_tree = STRtree(polys)
+    for i, poly in enumerate(polys):
+        for j in r_tree.query(poly):
+            if j == i:
+                continue
+            other = polys[j]
+            if poly.intersects(other) and not poly.touches(other):
+                return True
+    return False
+
+
+def _insert_propagate_groups(
+    groups: Dict[int, pd.DataFrame],
+    *,
+    nmax: int = 60,
+    topk: int = 5,
+    min_improve: float = 1e-12,
+    verbose: bool = True,
+) -> Dict[int, pd.DataFrame]:
+    """
+    Best-effort "reverse propagate": try to improve group n+1 using group n by inserting 1 tree.
+
+    This only makes sense because all trees are identical in this competition, so any (n+1)-tree
+    arrangement is valid for group n+1. We attempt a small set of insertions from the current
+    (n+1)-tree group into the n-tree group's layout and keep the best valid improvement.
+    """
+
+    _require_numpy()
+    if not groups:
+        return groups
+
+    n_max = max(groups.keys())
+    n_stop = min(int(nmax), int(n_max) - 1)
+    if n_stop <= 0:
+        return groups
+
+    topk = max(1, int(topk))
+    improved = 0
+
+    for n in range(1, n_stop + 1):
+        if n not in groups or (n + 1) not in groups:
+            continue
+
+        base = groups[n].reset_index(drop=True)[["x", "y", "deg"]]
+        target = groups[n + 1].reset_index(drop=True)[["x", "y", "deg"]]
+        target_side = _group_side(target)
+
+        ranked: List[Tuple[float, int]] = []
+        for i in range(len(target)):
+            cand = pd.concat([base, target.iloc[[i]]], ignore_index=True)
+            ranked.append((_group_side(cand), int(i)))
+        ranked.sort(key=lambda t: t[0])
+
+        best_df = None
+        best_side = target_side
+        for cand_side, i in ranked[:topk]:
+            if cand_side >= best_side - float(min_improve):
+                break
+            cand = pd.concat([base, target.iloc[[i]]], ignore_index=True)
+            if _group_has_overlap(cand):
+                continue
+            best_df = cand
+            best_side = cand_side
+            break
+
+        if best_df is not None:
+            improved += 1
+            groups[n + 1] = best_df.reset_index(drop=True)[["x", "y", "deg"]]
+            if verbose:
+                print(f"insert-prop n={n+1:03d}: {target_side:.9f} -> {best_side:.9f} (from n={n:03d})")
+
+    if verbose:
+        print(f"insert-prop improved groups: {improved}")
+    return groups
+
+
 def _submission_df_to_groups(df: pd.DataFrame) -> Dict[int, pd.DataFrame]:
     tmp = df[["id", "x", "y", "deg"]].copy()
     tmp["_group"] = tmp["id"].astype(str).str.split("_").str[0]
@@ -1261,6 +1343,23 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Try to improve group n-1 by deleting one tree from group n (descending n), a common public trick.",
     )
     parser.add_argument(
+        "--insert-propagate",
+        action="store_true",
+        help="Try to improve group n+1 using group n by inserting 1 tree (best-effort; small-n only).",
+    )
+    parser.add_argument(
+        "--insert-propagate-nmax",
+        type=int,
+        default=60,
+        help="With --insert-propagate, only attempt groups up to this n (default 60).",
+    )
+    parser.add_argument(
+        "--insert-propagate-topk",
+        type=int,
+        default=5,
+        help="With --insert-propagate, validate up to top-K candidate inserts per group (default 5).",
+    )
+    parser.add_argument(
         "--decimals",
         type=int,
         default=16,
@@ -1389,9 +1488,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             fix_direction=bool(args.fix_direction),
             verbose=not bool(args.opt_small_quiet),
         )
-        if args.delete_propagate:
+        if args.delete_propagate or args.insert_propagate:
             groups = _submission_df_to_groups(df)
-            groups = _delete_propagate_groups(groups, verbose=True)
+            if args.delete_propagate:
+                groups = _delete_propagate_groups(groups, verbose=True)
+            if args.insert_propagate:
+                groups = _insert_propagate_groups(
+                    groups,
+                    nmax=int(args.insert_propagate_nmax),
+                    topk=int(args.insert_propagate_topk),
+                    verbose=True,
+                )
             df = _groups_to_submission_df(groups)
             if args.fix_direction:
                 df = apply_fix_direction(df, decimals=args.decimals)
@@ -1437,9 +1544,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             decimals=args.decimals,
             verbose=True,
         )
-        if args.delete_propagate:
+        if args.delete_propagate or args.insert_propagate:
             groups = _submission_df_to_groups(df)
-            groups = _delete_propagate_groups(groups, verbose=True)
+            if args.delete_propagate:
+                groups = _delete_propagate_groups(groups, verbose=True)
+            if args.insert_propagate:
+                groups = _insert_propagate_groups(
+                    groups,
+                    nmax=int(args.insert_propagate_nmax),
+                    topk=int(args.insert_propagate_topk),
+                    verbose=True,
+                )
             df = _groups_to_submission_df(groups)
             if args.fix_direction:
                 df = apply_fix_direction(df, decimals=args.decimals)
@@ -1467,6 +1582,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         df = build_submission_grid_prune(args.nmax, span=args.grid_span)
     else:
         df = build_submission_greedy_prefix(args.nmax, seed=args.seed, attempts=args.attempts)
+    if args.delete_propagate or args.insert_propagate or args.fix_direction:
+        groups = _submission_df_to_groups(df)
+        if args.delete_propagate:
+            groups = _delete_propagate_groups(groups, verbose=True)
+        if args.insert_propagate:
+            groups = _insert_propagate_groups(
+                groups,
+                nmax=int(args.insert_propagate_nmax),
+                topk=int(args.insert_propagate_topk),
+                verbose=True,
+            )
+        df = _groups_to_submission_df(groups)
+        if args.fix_direction:
+            df = apply_fix_direction(df, decimals=args.decimals)
     df.to_csv(out_path)
     print(f"Wrote {out_path} (rows={len(df)})")
     if args.score:
