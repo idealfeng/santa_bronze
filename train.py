@@ -666,6 +666,136 @@ def _group_has_overlap(df_group: pd.DataFrame) -> bool:
     return False
 
 
+def _prune_group_to_n_min_side(df_group: pd.DataFrame, *, target_n: int) -> pd.DataFrame:
+    """
+    Select a subset of trees (rows) of size target_n to minimize the bounding square side.
+
+    This is a greedy "remove extreme contributor" heuristic. It's safe w.r.t overlaps because
+    removing trees cannot create overlaps.
+    """
+    _require_numpy()
+    target_n = int(target_n)
+    g = df_group.reset_index(drop=True)[["x", "y", "deg"]].copy()
+    if target_n <= 0:
+        return g.iloc[:0].copy()
+    if len(g) <= target_n:
+        return g
+
+    npx = _require_numpy()
+    tol = 1e-12
+    while len(g) > target_n:
+        minx, maxx, miny, maxy = _tree_bounds_per_tree(g)
+        g_minx = float(minx.min())
+        g_maxx = float(maxx.max())
+        g_miny = float(miny.min())
+        g_maxy = float(maxy.max())
+
+        # Candidate removals: any tree that touches a current extreme in X or Y.
+        cand = set()
+        cand.update(npx.where(npx.abs(minx - g_minx) <= tol)[0].tolist())
+        cand.update(npx.where(npx.abs(maxx - g_maxx) <= tol)[0].tolist())
+        cand.update(npx.where(npx.abs(miny - g_miny) <= tol)[0].tolist())
+        cand.update(npx.where(npx.abs(maxy - g_maxy) <= tol)[0].tolist())
+        if not cand:
+            cand = set(range(len(g)))
+
+        best_i = None
+        best_side = float("inf")
+        for i in cand:
+            mask = npx.ones(len(g), dtype=bool)
+            mask[int(i)] = False
+            g2_minx = float(minx[mask].min())
+            g2_maxx = float(maxx[mask].max())
+            g2_miny = float(miny[mask].min())
+            g2_maxy = float(maxy[mask].max())
+            side = max(g2_maxx - g2_minx, g2_maxy - g2_miny)
+            if side < best_side:
+                best_side = side
+                best_i = int(i)
+
+        if best_i is None:
+            best_i = 0
+
+        g = g.drop(index=best_i).reset_index(drop=True)
+
+    return g[["x", "y", "deg"]]
+
+
+def _suffix_min_propagate_groups(
+    groups: Dict[int, pd.DataFrame],
+    *,
+    mode: str,
+    min_improve: float,
+    decimals: int,
+    verbose: bool,
+) -> Dict[int, pd.DataFrame]:
+    """
+    If a larger-N configuration fits in a smaller (or equal) square, then the smaller-N is "suboptimal":
+    you can reuse the larger layout and simply drop trees.
+
+    This pass enforces: side(n) <= min_{k>=n} side(k) by copying from a suffix best group.
+
+    mode:
+      - "prefix": take first n rows from best larger group (matches many incremental submissions).
+      - "prune": greedily remove trees to reach n with smaller side.
+    """
+    _require_numpy()
+    if not groups:
+        return groups
+
+    mode = str(mode or "prefix").strip().lower()
+    if mode not in ("prefix", "prune"):
+        raise ValueError(f"Unknown suffix-min mode: {mode}")
+
+    decimals = max(16, int(decimals))
+    min_improve = float(min_improve)
+
+    n_max = max(groups.keys())
+    sides = {n: _group_side(groups[n]) for n in groups.keys()}
+
+    suffix_best_n: Dict[int, int] = {}
+    suffix_best_side: Dict[int, float] = {}
+    best_n = n_max
+    best_side = float("inf")
+    for n in range(n_max, 0, -1):
+        if n not in groups:
+            continue
+        s = float(sides[n])
+        if s < best_side - min_improve:
+            best_side = s
+            best_n = n
+        suffix_best_n[n] = int(best_n)
+        suffix_best_side[n] = float(best_side)
+
+    improved = 0
+    for n in sorted(groups.keys()):
+        m = suffix_best_n.get(n)
+        if m is None or m == n:
+            continue
+        if suffix_best_side.get(n, float("inf")) >= float(sides[n]) - min_improve:
+            continue
+
+        src = groups[m].reset_index(drop=True)[["x", "y", "deg"]]
+        if mode == "prefix":
+            cand = src.iloc[:n].copy().reset_index(drop=True)
+        else:
+            cand = _prune_group_to_n_min_side(src, target_n=n)
+
+        # Removing trees cannot introduce overlaps, so no need to validate here.
+        old_side = float(sides[n])
+        new_side = float(_group_side(cand))
+        if new_side < old_side - min_improve:
+            groups[n] = cand.reset_index(drop=True)[["x", "y", "deg"]]
+            sides[n] = new_side
+            improved += 1
+            if verbose:
+                print(f"suffix-min n={n:03d}: {old_side:.9f} -> {new_side:.9f} (from n={m:03d}, mode={mode})")
+
+    if verbose:
+        print(f"suffix-min improved groups: {improved}")
+    return groups
+
+
 def _insert_propagate_groups(
     groups: Dict[int, pd.DataFrame],
     *,
@@ -774,6 +904,125 @@ def _group_score(df_group: pd.DataFrame) -> float:
     side = _group_side(df_group)
     n = max(1, len(df_group))
     return (side * side) / float(n)
+
+
+def _wrap_degrees(deg):
+    npx = _require_numpy()
+    deg = npx.asarray(deg, dtype=npx.float64)
+    return (deg + 180.0) % 360.0 - 180.0
+
+
+def _circular_mean_degrees(a_deg, b_deg):
+    npx = _require_numpy()
+    a = npx.deg2rad(npx.asarray(a_deg, dtype=npx.float64))
+    b = npx.deg2rad(npx.asarray(b_deg, dtype=npx.float64))
+    c = npx.cos(a) + npx.cos(b)
+    s = npx.sin(a) + npx.sin(b)
+    out = npx.arctan2(s, c)
+    # If the mean vector is ~0, the average is undefined; keep a_deg in that case.
+    bad = (npx.abs(c) < 1e-12) & (npx.abs(s) < 1e-12)
+    if npx.any(bad):
+        out = out.copy()
+        out[bad] = a[bad]
+    return _wrap_degrees(npx.rad2deg(out))
+
+
+def _symmetry180_group(df_group: pd.DataFrame, *, decimals: int) -> pd.DataFrame:
+    """
+    Enforce 180° rotational symmetry by pairing trees around a chosen center and averaging each pair
+    to the nearest symmetric configuration. Works best as a "try-and-keep-if-better" operator.
+
+    Input/Output: a per-group df with columns x,y,deg (string values with 's' prefix).
+    """
+    npx = _require_numpy()
+    g = df_group.reset_index(drop=True)[["x", "y", "deg"]].copy()
+    n = len(g)
+    if n <= 1 or (n % 2) != 0:
+        return g
+
+    x = _parse_s_floats(g["x"])
+    y = _parse_s_floats(g["y"])
+    deg = _parse_s_floats(g["deg"])
+
+    # Symmetry center: bounding-box center of tree centers (cheap + stable).
+    xc = 0.5 * (float(x.min()) + float(x.max()))
+    yc = 0.5 * (float(y.min()) + float(y.max()))
+
+    ang = npx.arctan2(y - yc, x - xc)
+    order = npx.argsort(ang, kind="mergesort")
+    half = n // 2
+    a_idx = order[:half]
+    b_idx = order[half:]
+
+    # Average each pair (a, b) to satisfy: (xb, yb) = (2c - xa, 2c - ya)
+    xa = x[a_idx]
+    ya = y[a_idx]
+    xb = x[b_idx]
+    yb = y[b_idx]
+
+    xa_new = 0.5 * (xa + (2.0 * xc - xb))
+    ya_new = 0.5 * (ya + (2.0 * yc - yb))
+    xb_new = 2.0 * xc - xa_new
+    yb_new = 2.0 * yc - ya_new
+
+    # Average angles so that: deg_b = deg_a + 180 (mod 360)
+    da = deg[a_idx]
+    db = deg[b_idx]
+    da_new = _circular_mean_degrees(da, _wrap_degrees(db - 180.0))
+    db_new = _wrap_degrees(da_new + 180.0)
+
+    x2 = x.copy()
+    y2 = y.copy()
+    d2 = deg.copy()
+    x2[a_idx] = xa_new
+    y2[a_idx] = ya_new
+    d2[a_idx] = da_new
+    x2[b_idx] = xb_new
+    y2[b_idx] = yb_new
+    d2[b_idx] = db_new
+
+    x2, _sx = _shift_into_bounds(x2)
+    y2, _sy = _shift_into_bounds(y2)
+
+    out = g.copy()
+    out["x"] = [_format_s_prec(v, decimals=decimals) for v in x2.tolist()]
+    out["y"] = [_format_s_prec(v, decimals=decimals) for v in y2.tolist()]
+    out["deg"] = [_format_s_prec(v, decimals=decimals) for v in d2.tolist()]
+    return out[["x", "y", "deg"]]
+
+
+def _symmetry180_try_improve_groups(
+    groups: Dict[int, pd.DataFrame],
+    *,
+    nmax: int,
+    exclude: Optional[set[int]],
+    min_improve: float,
+    decimals: int,
+    verbose: bool,
+) -> Dict[int, pd.DataFrame]:
+    _require_numpy()
+    exclude = exclude or set()
+    improved = 0
+    for n, g in list(groups.items()):
+        if n > int(nmax):
+            continue
+        if (n % 2) != 0:
+            continue
+        if n in exclude:
+            continue
+        old_side = _group_side(g)
+        cand = _symmetry180_group(g, decimals=decimals)
+        if _group_has_overlap(cand):
+            continue
+        new_side = _group_side(cand)
+        if new_side < old_side - float(min_improve):
+            groups[n] = cand.reset_index(drop=True)[["x", "y", "deg"]]
+            improved += 1
+            if verbose:
+                print(f"sym180 n={n:03d}: {old_side:.9f} -> {new_side:.9f}")
+    if verbose:
+        print(f"sym180 improved groups: {improved}")
+    return groups
 
 
 def _sa_optimize_group(
@@ -1338,6 +1587,53 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Rotate each group globally to minimize its axis-aligned bounding square (works with --ensemble-in).",
     )
     parser.add_argument(
+        "--symmetry180",
+        action="store_true",
+        help=(
+            "Try enforcing 180° rotational symmetry on even-n groups and keep only improvements "
+            "(best-effort; can be combined with --fix-direction / propagate tricks)."
+        ),
+    )
+    parser.add_argument(
+        "--symmetry180-nmax",
+        type=int,
+        default=200,
+        help="With --symmetry180, only attempt groups up to this n (default 200).",
+    )
+    parser.add_argument(
+        "--symmetry180-exclude",
+        nargs="*",
+        type=int,
+        default=[],
+        help="With --symmetry180, exclude specific group sizes (e.g. 36 64).",
+    )
+    parser.add_argument(
+        "--symmetry180-min-improve",
+        type=float,
+        default=1e-12,
+        help="With --symmetry180, minimum side improvement to accept (default 1e-12).",
+    )
+    parser.add_argument(
+        "--suffix-min-propagate",
+        action="store_true",
+        help=(
+            "If some larger-N group fits in a smaller square than a smaller-N group, copy from the larger "
+            "and drop trees to improve the smaller (enforces suffix-min monotonicity of side)."
+        ),
+    )
+    parser.add_argument(
+        "--suffix-min-mode",
+        choices=["prefix", "prune"],
+        default="prefix",
+        help="With --suffix-min-propagate, how to drop trees from the larger group (default prefix).",
+    )
+    parser.add_argument(
+        "--suffix-min-improve",
+        type=float,
+        default=1e-12,
+        help="With --suffix-min-propagate, minimum side improvement to accept (default 1e-12).",
+    )
+    parser.add_argument(
         "--delete-propagate",
         action="store_true",
         help="Try to improve group n-1 by deleting one tree from group n (descending n), a common public trick.",
@@ -1419,6 +1715,43 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.clean_in is not None:
         src = pd.read_csv(args.clean_in, dtype=str)
         df = normalize_submission_df(src, path_hint=str(args.clean_in))
+        if (
+            args.delete_propagate
+            or args.insert_propagate
+            or args.symmetry180
+            or args.suffix_min_propagate
+            or args.fix_direction
+        ):
+            groups = _submission_df_to_groups(df)
+            if args.delete_propagate:
+                groups = _delete_propagate_groups(groups, verbose=True)
+            if args.insert_propagate:
+                groups = _insert_propagate_groups(
+                    groups,
+                    nmax=int(args.insert_propagate_nmax),
+                    topk=int(args.insert_propagate_topk),
+                    verbose=True,
+                )
+            if args.symmetry180:
+                groups = _symmetry180_try_improve_groups(
+                    groups,
+                    nmax=int(args.symmetry180_nmax),
+                    exclude=set(int(x) for x in (args.symmetry180_exclude or [])),
+                    min_improve=float(args.symmetry180_min_improve),
+                    decimals=int(args.decimals),
+                    verbose=True,
+                )
+            if args.suffix_min_propagate:
+                groups = _suffix_min_propagate_groups(
+                    groups,
+                    mode=str(args.suffix_min_mode),
+                    min_improve=float(args.suffix_min_improve),
+                    decimals=int(args.decimals),
+                    verbose=True,
+                )
+            df = _groups_to_submission_df(groups)
+            if args.fix_direction:
+                df = apply_fix_direction(df, decimals=args.decimals)
         out_path = Path(args.out)
         df.to_csv(out_path, index=False)
         print(f"Wrote {out_path} (rows={len(df)})")
@@ -1488,7 +1821,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             fix_direction=bool(args.fix_direction),
             verbose=not bool(args.opt_small_quiet),
         )
-        if args.delete_propagate or args.insert_propagate:
+        if args.delete_propagate or args.insert_propagate or args.symmetry180 or args.suffix_min_propagate:
             groups = _submission_df_to_groups(df)
             if args.delete_propagate:
                 groups = _delete_propagate_groups(groups, verbose=True)
@@ -1497,6 +1830,23 @@ def main(argv: Optional[List[str]] = None) -> int:
                     groups,
                     nmax=int(args.insert_propagate_nmax),
                     topk=int(args.insert_propagate_topk),
+                    verbose=True,
+                )
+            if args.symmetry180:
+                groups = _symmetry180_try_improve_groups(
+                    groups,
+                    nmax=int(args.symmetry180_nmax),
+                    exclude=set(int(x) for x in (args.symmetry180_exclude or [])),
+                    min_improve=float(args.symmetry180_min_improve),
+                    decimals=int(args.decimals),
+                    verbose=True,
+                )
+            if args.suffix_min_propagate:
+                groups = _suffix_min_propagate_groups(
+                    groups,
+                    mode=str(args.suffix_min_mode),
+                    min_improve=float(args.suffix_min_improve),
+                    decimals=int(args.decimals),
                     verbose=True,
                 )
             df = _groups_to_submission_df(groups)
@@ -1544,7 +1894,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             decimals=args.decimals,
             verbose=True,
         )
-        if args.delete_propagate or args.insert_propagate:
+        if args.delete_propagate or args.insert_propagate or args.symmetry180 or args.suffix_min_propagate:
             groups = _submission_df_to_groups(df)
             if args.delete_propagate:
                 groups = _delete_propagate_groups(groups, verbose=True)
@@ -1553,6 +1903,23 @@ def main(argv: Optional[List[str]] = None) -> int:
                     groups,
                     nmax=int(args.insert_propagate_nmax),
                     topk=int(args.insert_propagate_topk),
+                    verbose=True,
+                )
+            if args.symmetry180:
+                groups = _symmetry180_try_improve_groups(
+                    groups,
+                    nmax=int(args.symmetry180_nmax),
+                    exclude=set(int(x) for x in (args.symmetry180_exclude or [])),
+                    min_improve=float(args.symmetry180_min_improve),
+                    decimals=int(args.decimals),
+                    verbose=True,
+                )
+            if args.suffix_min_propagate:
+                groups = _suffix_min_propagate_groups(
+                    groups,
+                    mode=str(args.suffix_min_mode),
+                    min_improve=float(args.suffix_min_improve),
+                    decimals=int(args.decimals),
                     verbose=True,
                 )
             df = _groups_to_submission_df(groups)
@@ -1582,7 +1949,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         df = build_submission_grid_prune(args.nmax, span=args.grid_span)
     else:
         df = build_submission_greedy_prefix(args.nmax, seed=args.seed, attempts=args.attempts)
-    if args.delete_propagate or args.insert_propagate or args.fix_direction:
+    if (
+        args.delete_propagate
+        or args.insert_propagate
+        or args.symmetry180
+        or args.suffix_min_propagate
+        or args.fix_direction
+    ):
         groups = _submission_df_to_groups(df)
         if args.delete_propagate:
             groups = _delete_propagate_groups(groups, verbose=True)
@@ -1591,6 +1964,23 @@ def main(argv: Optional[List[str]] = None) -> int:
                 groups,
                 nmax=int(args.insert_propagate_nmax),
                 topk=int(args.insert_propagate_topk),
+                verbose=True,
+            )
+        if args.symmetry180:
+            groups = _symmetry180_try_improve_groups(
+                groups,
+                nmax=int(args.symmetry180_nmax),
+                exclude=set(int(x) for x in (args.symmetry180_exclude or [])),
+                min_improve=float(args.symmetry180_min_improve),
+                decimals=int(args.decimals),
+                verbose=True,
+            )
+        if args.suffix_min_propagate:
+            groups = _suffix_min_propagate_groups(
+                groups,
+                mode=str(args.suffix_min_mode),
+                min_improve=float(args.suffix_min_improve),
+                decimals=int(args.decimals),
                 verbose=True,
             )
         df = _groups_to_submission_df(groups)
