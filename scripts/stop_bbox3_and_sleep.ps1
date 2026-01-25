@@ -1,10 +1,10 @@
-$ErrorActionPreference = "Stop"
-
 param(
     [string]$Python = $env:SANTA_PYTHON,
     [int]$SleepHours = 3,
     [int]$KillTimeoutSec = 30
 )
+
+$ErrorActionPreference = "Stop"
 
 $ProjectDir = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $ProjectDir
@@ -91,4 +91,3 @@ if ($procs.Count -gt 0) {
 $secs = [Math]::Max(60, $SleepHours * 3600)
 Write-Host ("Sleeping for " + $SleepHours + " hour(s)...")
 rundll32.exe powrprof.dll,SetSuspendState 0,1,0
-

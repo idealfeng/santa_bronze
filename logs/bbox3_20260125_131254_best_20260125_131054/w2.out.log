@@ -1,0 +1,37 @@
+Start score: 70.416112303487 | combos=60 | rounds=5000
+[001] invalid n=1200 r=71: Overlapping trees in group 050
+[002] invalid n=1200 r=73: Overlapping trees in group 021
+[003] invalid n=1200 r=79: Overlapping trees in group 021
+[004] invalid n=1200 r=83: Overlapping trees in group 198
+[005] invalid n=1200 r=89: Overlapping trees in group 050
+[006] invalid n=1200 r=97: Overlapping trees in group 050
+[007] invalid n=1200 r=101: Overlapping trees in group 050
+[008] invalid n=1200 r=103: Overlapping trees in group 021
+[009] NEW BEST 70.416105246926 (n=1200 r=107) t=23.5m
+[010] keep 70.416105246926 (cand 70.416105246926) n=1200 r=109
+[011] invalid n=1200 r=113: Overlapping trees in group 021
+[012] keep 70.416105246926 (cand 70.416105246926) n=1200 r=127
+[013] invalid n=1200 r=131: Overlapping trees in group 050
+[014] NEW BEST 70.416105064217 (n=1200 r=137) t=41.9m
+[015] NEW BEST 70.416104978742 (n=1200 r=139) t=46.3m
+[016] keep 70.416104978742 (cand 70.416104978742) n=1500 r=71
+[017] NEW BEST 70.416104978705 (n=1500 r=73) t=50.9m
+[018] NEW BEST 70.416104951313 (n=1500 r=79) t=53.7m
+[019] keep 70.416104951313 (cand 70.416104951313) n=1500 r=83
+[020] NEW BEST 70.416104835710 (n=1500 r=89) t=59.2m
+[021] NEW BEST 70.416104834956 (n=1500 r=97) t=62.2m
+[022] keep 70.416104834956 (cand 70.416104834956) n=1500 r=101
+[023] NEW BEST 70.416104834941 (n=1500 r=103) t=68.5m
+[024] keep 70.416104834941 (cand 70.416104834941) n=1500 r=107
+[025] keep 70.416104834941 (cand 70.416104834941) n=1500 r=109
+[026] keep 70.416104834941 (cand 70.416104834941) n=1500 r=113
+[027] keep 70.416104834941 (cand 70.416104834941) n=1500 r=127
+[028] keep 70.416104834941 (cand 70.416104834941) n=1500 r=131
+[029] keep 70.416104834941 (cand 70.416104834941) n=1500 r=137
+[030] keep 70.416104834941 (cand 70.416104834941) n=1500 r=139
+[031] invalid n=1800 r=71: Overlapping trees in group 016
+[032] invalid n=1800 r=73: Overlapping trees in group 016
+[033] NEW BEST 70.416104604844 (n=1800 r=79) t=103.1m
+[034] invalid n=1800 r=83: Overlapping trees in group 016
+[035] invalid n=1800 r=89: Overlapping trees in group 016
+[036] keep 70.416104604844 (cand 70.416104604844) n=1800 r=97

@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "D:\Paper\kaggle\santa\bbox3_runner.py", line 405, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "D:\Paper\kaggle\santa\bbox3_runner.py", line 381, in main
+    _atomic_write_csv(best_df, out_path)
+  File "D:\Paper\kaggle\santa\bbox3_runner.py", line 108, in _atomic_write_csv
+    tmp.replace(path)
+  File "E:\anaconda\envs\torch312\Lib\pathlib.py", line 1376, in replace
+    os.replace(self, target)
+PermissionError: [WinError 5] ¾Ü¾ø·ÃÎÊ¡£: 'baseline_csv\\submission_bbox3_best704452_shake_v8_w1.csv.tmp' -> 'baseline_csv\\submission_bbox3_best704452_shake_v8_w1.csv'

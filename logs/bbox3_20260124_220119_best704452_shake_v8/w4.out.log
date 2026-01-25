@@ -1,0 +1,13 @@
+Start score: 70.445194683280 | combos=60 | rounds=5000
+[001] invalid n=1200 r=229: Overlapping trees in group 053
+[002] NEW BEST 70.445194417310 (n=1200 r=233) t=12.0m
+[003] NEW BEST 70.445194045456 (n=1200 r=239) t=18.0m
+[004] invalid n=1200 r=241: Overlapping trees in group 053
+[005] NEW BEST 70.445194040324 (n=1200 r=251) t=29.8m
+[006] NEW BEST 70.445194038467 (n=1200 r=257) t=36.6m
+[007] NEW BEST 70.445193966042 (n=1200 r=263) t=43.2m
+[008] invalid n=1200 r=269: Overlapping trees in group 053
+[009] NEW BEST 70.445193959892 (n=1200 r=271) t=56.6m
+[010] NEW BEST 70.445193952144 (n=1200 r=277) t=63.5m
+[011] keep 70.445193952144 (cand 70.445193952144) n=1200 r=281
+[012] keep 70.445193952144 (cand 70.445193952144) n=1200 r=283

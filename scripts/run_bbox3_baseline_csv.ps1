@@ -1,6 +1,7 @@
 param(
     [string]$Python = $env:SANTA_PYTHON,
     [string]$WslDistro = "Ubuntu",
+    [string]$Bbox3Path = "data\\improvesanta\\archive\\bbox3",
     [string]$InputCsv = "baseline_csv\\submission.csv",
     [string]$DonorCsv = "baseline_csv\\submission.csv",
     [string]$RunName = "",
@@ -68,7 +69,7 @@ function Start-BBox3Worker {
         (Join-Path $ProjectDir "bbox3_runner.py"),
         "--input", $InputCsv,
         "--donor", $DonorCsv,
-        "--bbox3", "data\\improvesanta\\archive\\bbox3",
+        "--bbox3", $Bbox3Path,
         "--wsl-distro", $WslDistro,
         "--workdir", $Workdir,
         "--out", $OutCsv,

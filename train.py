@@ -523,6 +523,8 @@ def ensemble_best_by_group(
     paths: List[str],
     *,
     fix_direction: bool,
+    validate_overlap: bool = False,
+    validate_topk: int = 5,
     decimals: int = 12,
     verbose: bool = True,
 ) -> pd.DataFrame:
@@ -532,33 +534,49 @@ def ensemble_best_by_group(
     inputs = [(p, _read_submission_groups(p)) for p in paths]
     all_groups = sorted({g for _p, mp in inputs for g in mp.keys()}, key=lambda s: int(s))
 
+    validate_topk = max(1, int(validate_topk))
+
     chosen: List[pd.DataFrame] = []
     counts: Dict[str, int] = {p: 0 for p in paths}
     for g in all_groups:
-        best_path = None
-        best_side = float("inf")
-        best_phi = 0.0
-        best_df = None
-
+        ranked: List[Tuple[float, str, float, pd.DataFrame]] = []
         for path, mp in inputs:
             if g not in mp:
                 continue
             df_g = mp[g]
             side, phi = _group_side_and_best_phi(df_g, allow_rotate=fix_direction)
-            if side < best_side:
-                best_side = side
-                best_phi = phi
-                best_path = path
-                best_df = df_g
+            ranked.append((float(side), str(path), float(phi), df_g))
 
-        if best_df is None:
+        if not ranked:
             raise ValueError(f"Missing group {g} in all inputs.")
 
-        if fix_direction and best_phi != 0.0:
-            best_df = _rotate_group_df(best_df, best_phi, decimals=decimals)
+        ranked.sort(key=lambda t: t[0])
 
-        chosen.append(best_df[["id", "x", "y", "deg"]])
-        counts[best_path] += 1
+        pick_df = None
+        pick_path = None
+        tried = 0
+        for side, path, phi, df_g in ranked:
+            tried += 1
+            cand = df_g
+            if fix_direction and phi != 0.0:
+                cand = _rotate_group_df(cand, phi, decimals=decimals)
+
+            if validate_overlap:
+                # Only a few best candidates are usually enough; avoid an O(files * groups) polygon storm.
+                if tried > validate_topk and pick_df is not None:
+                    break
+                if _group_has_overlap(cand[["x", "y", "deg"]]):
+                    continue
+
+            pick_df = cand
+            pick_path = path
+            break
+
+        if pick_df is None or pick_path is None:
+            raise ValueError(f"Could not find a non-overlapping candidate for group {g}.")
+
+        chosen.append(pick_df[["id", "x", "y", "deg"]])
+        counts[pick_path] += 1
 
     out = pd.concat(chosen, ignore_index=True).sort_values("id").reset_index(drop=True)
     out = out[["id", "x", "y", "deg"]]
@@ -649,7 +667,12 @@ def _delete_propagate_groups(groups: Dict[int, pd.DataFrame], *, verbose: bool =
     return groups
 
 
-def _group_has_overlap(df_group: pd.DataFrame) -> bool:
+def _group_has_overlap_fast(df_group: pd.DataFrame) -> bool:
+    """
+    Fast overlap check using float-parsed inputs.
+
+    Note: this can produce rare false negatives vs the exact metric semantics due to float parsing.
+    """
     g = df_group.reset_index(drop=True)
     x = _parse_s_floats(g["x"])
     y = _parse_s_floats(g["y"])
@@ -661,6 +684,36 @@ def _group_has_overlap(df_group: pd.DataFrame) -> bool:
             if j == i:
                 continue
             other = polys[j]
+            if poly.intersects(other) and not poly.touches(other):
+                return True
+    return False
+
+
+def _group_has_overlap(df_group: pd.DataFrame) -> bool:
+    """
+    Overlap check matching score_submission semantics (string -> Decimal -> scaled polygon).
+    """
+    g = df_group.reset_index(drop=True)[["x", "y", "deg"]].copy()
+    placed: List[ChristmasTree] = []
+    for _, row in g.iterrows():
+        xs = str(row["x"]).strip()
+        ys = str(row["y"]).strip()
+        ds = str(row["deg"]).strip()
+        if xs.startswith("s"):
+            xs = xs[1:]
+        if ys.startswith("s"):
+            ys = ys[1:]
+        if ds.startswith("s"):
+            ds = ds[1:]
+        placed.append(ChristmasTree(xs, ys, ds))
+
+    polys = [t.polygon for t in placed]
+    r_tree = STRtree(polys)
+    for i, poly in enumerate(polys):
+        for j in r_tree.query(poly):
+            if int(j) == i:
+                continue
+            other = polys[int(j)]
             if poly.intersects(other) and not poly.touches(other):
                 return True
     return False
@@ -1582,6 +1635,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="With --ensemble-dir, only keep the best N submissions by fast score (default 50).",
     )
     parser.add_argument(
+        "--ensemble-validate-overlap",
+        action="store_true",
+        help="With --ensemble-dir/--ensemble-in, skip candidate groups that have overlaps (slower but safer).",
+    )
+    parser.add_argument(
+        "--ensemble-validate-topk",
+        type=int,
+        default=5,
+        help="With --ensemble-validate-overlap, only try up to top-K candidates per group (default 5).",
+    )
+    parser.add_argument(
         "--fix-direction",
         action="store_true",
         help="Rotate each group globally to minimize its axis-aligned bounding square (works with --ensemble-in).",
@@ -1891,6 +1955,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         df = ensemble_best_by_group(
             paths,
             fix_direction=args.fix_direction,
+            validate_overlap=bool(args.ensemble_validate_overlap),
+            validate_topk=int(args.ensemble_validate_topk),
             decimals=args.decimals,
             verbose=True,
         )

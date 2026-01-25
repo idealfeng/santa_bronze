@@ -1,0 +1,119 @@
+[{"stream_name":"stderr","time":10.53160843,"data":"0.00s - Debugger warning: It seems that frozen modules are being used, which may\n"}
+,{"stream_name":"stderr","time":10.531673639,"data":"0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off\n"}
+,{"stream_name":"stderr","time":10.531681687,"data":"0.00s - to python to disable frozen modules.\n"}
+,{"stream_name":"stderr","time":10.531687054,"data":"0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.\n"}
+,{"stream_name":"stderr","time":11.332370952,"data":"0.00s - Debugger warning: It seems that frozen modules are being used, which may\n"}
+,{"stream_name":"stderr","time":11.332407704,"data":"0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off\n"}
+,{"stream_name":"stderr","time":11.332414008,"data":"0.00s - to python to disable frozen modules.\n"}
+,{"stream_name":"stderr","time":11.332417718,"data":"0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.\n"}
+,{"stream_name":"stdout","time":14.659743664,"data":"Writing bbox3.cpp\n"}
+,{"stream_name":"stdout","time":20.548851494,"data":"Loading submission.csv...\r\n"}
+,{"stream_name":"stdout","time":20.548890542,"data":"Loaded 200 configs (N=1 to N=200).\r\n"}
+,{"stream_name":"stdout","time":20.548896275,"data":"Initial Total Score: 70.536488\r\n"}
+,{"stream_name":"stdout","time":20.548901018,"data":"\r\n"}
+,{"stream_name":"stdout","time":20.548905695,"data":"Starting parallel optimization on 200 configurations.\r\n"}
+,{"stream_name":"stdout","time":20.548910597,"data":"Using 4 threads (Max Concurrency).\r\n"}
+,{"stream_name":"stdout","time":20.548915552,"data":"\r\n"}
+,{"stream_name":"stdout","time":37.139913188,"data":"[1] n= 64: 0.348583469691 -\u003e 0.348583465195 (0.0000% better) 🏆\r\n"}
+,{"stream_name":"stdout","time":41.350851143,"data":"[1] n= 57: 0.353175341221 -\u003e 0.353175341221 (0.0000% better) 🏆\r\n"}
+,{"stream_name":"stdout","time":44.174265859,"data":"[1] n= 52: 0.357107357045 -\u003e 0.357107345319 (0.0000% better) 🏆\r\n"}
+,{"stream_name":"stdout","time":45.00179487,"data":"[1] n= 51: 0.364109384087 -\u003e 0.364109310678 (0.0000% better) 🏆\r\n"}
+,{"stream_name":"stdout","time":60.720420065,"data":"[3] n= 22: 0.372352944519 -\u003e 0.372352944519 (0.0000% better) 🏆\r\n"}
+,{"stream_name":"stdout","time":62.856892945,"data":"[3] n= 20: 0.375262484511 -\u003e 0.375262484403 (0.0000% better) 🏆\r\n"}
+,{"stream_name":"stdout","time":91.946707698,"data":"\r\n"}
+,{"stream_name":"stdout","time":91.946743994,"data":"========================================\r\n"}
+,{"stream_name":"stdout","time":91.946751659,"data":"Optimization Complete\r\n"}
+,{"stream_name":"stdout","time":91.946757581,"data":"Initial Score: 70.536488063742\r\n"}
+,{"stream_name":"stdout","time":91.946763881,"data":"Final Score:   70.536487974001\r\n"}
+,{"stream_name":"stdout","time":91.946769647,"data":"Improvement:   0.000000089740 (0.00%)\r\n"}
+,{"stream_name":"stdout","time":91.946775485,"data":"Total Time:    71.4s\r\n"}
+,{"stream_name":"stdout","time":91.946779504,"data":"========================================\r\n"}
+,{"stream_name":"stdout","time":91.988076353,"data":"Saved results to: submission.csv\r\n"}
+,{"stream_name":"stdout","time":94.675831958,"data":"--- Scoring and Validation: submission.csv (N=1 to 200) ---\n"}
+,{"stream_name":"stdout","time":105.366773801,"data":"\n"}
+,{"stream_name":"stdout","time":105.366815255,"data":"--- Summary ---\n"}
+,{"stream_name":"stdout","time":105.366822842,"data":"✅ **Validation SUCCESSFUL**: No overlaps detected.\n"}
+,{"stream_name":"stdout","time":105.36685137,"data":"**Total Submission Score (Σ S²/N): 70.536488**\n"}
+,{"stream_name":"stdout","time":105.366857053,"data":"{'status': 'SUCCESS', 'total_score': 70.53648797400129, 'failed_overlap_n': []}\n"}
+,{"stream_name":"stdout","time":105.582346928,"data":"\n"}
+,{"stream_name":"stdout","time":105.582382323,"data":"--- SUCCESS ---\n"}
+,{"stream_name":"stdout","time":105.785238302,"data":"--- Scoring and Validation: submission.csv (N=1 to 200) ---\n"}
+,{"stream_name":"stdout","time":116.509311435,"data":"\n"}
+,{"stream_name":"stdout","time":116.509351891,"data":"--- Summary ---\n"}
+,{"stream_name":"stdout","time":116.509357864,"data":"✅ **Validation SUCCESSFUL**: No overlaps detected.\n"}
+,{"stream_name":"stdout","time":116.509363258,"data":"**Total Submission Score (Σ S²/N): 70.536488**\n"}
+,{"stream_name":"stdout","time":116.509369141,"data":"{'status': 'SUCCESS', 'total_score': 70.53648797400129, 'failed_overlap_n': []}\n"}
+,{"stream_name":"stdout","time":116.71045727,"data":"[121, 165, 38, 76, 33, 122, 2, 105, 150, 62]\n"}
+,{"stream_name":"stdout","time":117.22366196,"data":"--- Lattice Summary ---\n"}
+,{"stream_name":"stdout","time":117.223735659,"data":"Crystallization Spacing: ~0.7635 units\n"}
+,{"stream_name":"stdout","time":117.22374244,"data":"Blue Phase Population: 55\n"}
+,{"stream_name":"stdout","time":117.223747363,"data":"Pink Phase Population: 66\n"}
+,{"stream_name":"stdout","time":118.210922226,"data":"--- Lattice Summary ---\n"}
+,{"stream_name":"stdout","time":118.210959474,"data":"Crystallization Spacing: ~0.7610 units\n"}
+,{"stream_name":"stdout","time":118.210965886,"data":"Blue Phase Population: 83\n"}
+,{"stream_name":"stdout","time":118.210970893,"data":"Pink Phase Population: 82\n"}
+,{"stream_name":"stdout","time":118.905251887,"data":"--- Lattice Summary ---\n"}
+,{"stream_name":"stdout","time":118.905290289,"data":"Crystallization Spacing: ~0.7525 units\n"}
+,{"stream_name":"stdout","time":118.905296339,"data":"Blue Phase Population: 17\n"}
+,{"stream_name":"stdout","time":118.905301254,"data":"Pink Phase Population: 21\n"}
+,{"stream_name":"stdout","time":119.43141006,"data":"--- Lattice Summary ---\n"}
+,{"stream_name":"stdout","time":119.431444478,"data":"Crystallization Spacing: ~0.7489 units\n"}
+,{"stream_name":"stdout","time":119.431450908,"data":"Blue Phase Population: 36\n"}
+,{"stream_name":"stdout","time":119.431455565,"data":"Pink Phase Population: 40\n"}
+,{"stream_name":"stdout","time":119.944446441,"data":"--- Lattice Summary ---\n"}
+,{"stream_name":"stdout","time":119.94448322,"data":"Crystallization Spacing: ~0.7434 units\n"}
+,{"stream_name":"stdout","time":119.944489097,"data":"Blue Phase Population: 14\n"}
+,{"stream_name":"stdout","time":119.94449363,"data":"Pink Phase Population: 19\n"}
+,{"stream_name":"stdout","time":120.618131868,"data":"--- Lattice Summary ---\n"}
+,{"stream_name":"stdout","time":120.618166164,"data":"Crystallization Spacing: ~0.7686 units\n"}
+,{"stream_name":"stdout","time":120.618172338,"data":"Blue Phase Population: 61\n"}
+,{"stream_name":"stdout","time":120.618176945,"data":"Pink Phase Population: 61\n"}
+,{"stream_name":"stdout","time":120.96895349,"data":"--- Lattice Summary ---\n"}
+,{"stream_name":"stdout","time":120.968988158,"data":"Crystallization Spacing: ~0.4292 units\n"}
+,{"stream_name":"stdout","time":120.968993878,"data":"Blue Phase Population: 1\n"}
+,{"stream_name":"stdout","time":120.96899869,"data":"Pink Phase Population: 1\n"}
+,{"stream_name":"stdout","time":121.609112359,"data":"--- Lattice Summary ---\n"}
+,{"stream_name":"stdout","time":121.609157621,"data":"Crystallization Spacing: ~0.7551 units\n"}
+,{"stream_name":"stdout","time":121.609183354,"data":"Blue Phase Population: 50\n"}
+,{"stream_name":"stdout","time":121.609188824,"data":"Pink Phase Population: 55\n"}
+,{"stream_name":"stdout","time":122.440025615,"data":"--- Lattice Summary ---\n"}
+,{"stream_name":"stdout","time":122.440062626,"data":"Crystallization Spacing: ~0.7591 units\n"}
+,{"stream_name":"stdout","time":122.440068309,"data":"Blue Phase Population: 78\n"}
+,{"stream_name":"stdout","time":122.440073158,"data":"Pink Phase Population: 72\n"}
+,{"stream_name":"stdout","time":123.164674385,"data":"--- Lattice Summary ---\n"}
+,{"stream_name":"stdout","time":123.164712849,"data":"Crystallization Spacing: ~0.7444 units\n"}
+,{"stream_name":"stdout","time":123.164718303,"data":"Blue Phase Population: 31\n"}
+,{"stream_name":"stdout","time":123.164722613,"data":"Pink Phase Population: 31\n"}
+,{"stream_name":"stdout","time":123.88352843,"data":"TOP 10 LATTICE OFFSETS \u0026 ANGLES:\n"}
+,{"stream_name":"stdout","time":123.883566469,"data":"     dx    dy  blue_deg  pink_deg  frequency\n"}
+,{"stream_name":"stdout","time":123.883572663,"data":"0  0.24  0.06      67.9     247.9          2\n"}
+,{"stream_name":"stdout","time":123.883577306,"data":"1 -0.01  0.86     336.4     156.4          2\n"}
+,{"stream_name":"stdout","time":123.883581975,"data":"2  0.24  0.06      66.9     246.9          2\n"}
+,{"stream_name":"stdout","time":123.8835863,"data":"3  0.25  0.04      63.4     243.4          1\n"}
+,{"stream_name":"stdout","time":123.883590793,"data":"4  0.34 -0.06      27.8     213.5          1\n"}
+,{"stream_name":"stdout","time":123.883594117,"data":"5  0.31  0.52      23.6     203.6          1\n"}
+,{"stream_name":"stdout","time":123.883597078,"data":"6  0.30 -0.07      30.7     222.3          1\n"}
+,{"stream_name":"stdout","time":123.883600156,"data":"7  0.30 -0.20      68.0     158.0          1\n"}
+,{"stream_name":"stdout","time":123.883603186,"data":"8  0.29 -0.64     338.2      96.6          1\n"}
+,{"stream_name":"stdout","time":123.883606203,"data":"9  0.28  0.03      55.6     246.2          1\n"}
+,{"stream_name":"stderr","time":128.777162774,"data":"/usr/local/lib/python3.11/dist-packages/traitlets/traitlets.py:2915: FutureWarning: --Exporter.preprocessors=[\"remove_papermill_header.RemovePapermillHeader\"] for containers is deprecated in traitlets 5.0. You can pass `--Exporter.preprocessors item` ... multiple times to add items to a list.\n"}
+,{"stream_name":"stderr","time":128.777202512,"data":"  warn(\n"}
+,{"stream_name":"stderr","time":128.824771233,"data":"[NbConvertApp] Converting notebook __notebook__.ipynb to notebook\n"}
+,{"stream_name":"stderr","time":129.270216427,"data":"[NbConvertApp] Writing 1378991 bytes to __notebook__.ipynb\n"}
+,{"stream_name":"stderr","time":132.758202843,"data":"/usr/local/lib/python3.11/dist-packages/traitlets/traitlets.py:2915: FutureWarning: --Exporter.preprocessors=[\"nbconvert.preprocessors.ExtractOutputPreprocessor\"] for containers is deprecated in traitlets 5.0. You can pass `--Exporter.preprocessors item` ... multiple times to add items to a list.\n"}
+,{"stream_name":"stderr","time":132.758245236,"data":"  warn(\n"}
+,{"stream_name":"stderr","time":132.793476761,"data":"[NbConvertApp] Converting notebook __notebook__.ipynb to html\n"}
+,{"stream_name":"stderr","time":134.091653373,"data":"[NbConvertApp] Support files will be in __results___files/\n"}
+,{"stream_name":"stderr","time":134.09169147,"data":"[NbConvertApp] Making directory __results___files\n"}
+,{"stream_name":"stderr","time":134.092393789,"data":"[NbConvertApp] Making directory __results___files\n"}
+,{"stream_name":"stderr","time":134.092767527,"data":"[NbConvertApp] Making directory __results___files\n"}
+,{"stream_name":"stderr","time":134.092962274,"data":"[NbConvertApp] Making directory __results___files\n"}
+,{"stream_name":"stderr","time":134.093196961,"data":"[NbConvertApp] Making directory __results___files\n"}
+,{"stream_name":"stderr","time":134.093450925,"data":"[NbConvertApp] Making directory __results___files\n"}
+,{"stream_name":"stderr","time":134.093679789,"data":"[NbConvertApp] Making directory __results___files\n"}
+,{"stream_name":"stderr","time":134.093909434,"data":"[NbConvertApp] Making directory __results___files\n"}
+,{"stream_name":"stderr","time":134.094129067,"data":"[NbConvertApp] Making directory __results___files\n"}
+,{"stream_name":"stderr","time":134.094372095,"data":"[NbConvertApp] Making directory __results___files\n"}
+,{"stream_name":"stderr","time":134.094583607,"data":"[NbConvertApp] Making directory __results___files\n"}
+,{"stream_name":"stderr","time":134.094803755,"data":"[NbConvertApp] Writing 569172 bytes to __results__.html\n"}
+]

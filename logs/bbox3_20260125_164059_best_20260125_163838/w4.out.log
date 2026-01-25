@@ -1,0 +1,14 @@
+Start score: 70.406798495737 | combos=60 | rounds=5000
+[001] NEW BEST 70.406798174472 (n=1200 r=229) t=7.0m
+[002] invalid n=1200 r=233: Overlapping trees in group 187
+[003] NEW BEST 70.406798102234 (n=1200 r=239) t=20.7m
+[004] NEW BEST 70.406798062371 (n=1200 r=241) t=27.6m
+[005] NEW BEST 70.406798061019 (n=1200 r=251) t=34.5m
+[006] invalid n=1200 r=257: Overlapping trees in group 187
+[007] invalid n=1200 r=263: Overlapping trees in group 187
+[008] invalid n=1200 r=269: Overlapping trees in group 187
+[009] invalid n=1200 r=271: Overlapping trees in group 187
+[010] invalid n=1200 r=277: Overlapping trees in group 187
+[011] invalid n=1200 r=281: Overlapping trees in group 187
+[012] invalid n=1200 r=283: Overlapping trees in group 187
+[013] NEW BEST 70.406798054381 (n=1200 r=293) t=98.1m
