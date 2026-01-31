@@ -1,0 +1,60 @@
+# --- OS / Editor ---
+Thumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+.vscode/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+.conda/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# --- Rust / C++ build artifacts ---
+target/
+*.o
+*.obj
+*.pdb
+*.so
+*.dylib
+*.dll
+*.exe
+
+# --- Kaggle / competition generated artifacts ---
+# Root-level generated submissions / scratch files
+/*.csv
+/_tmp*.*
+/_grid*.csv
+/_smoke_submission.csv
+/_score_all_tmp.py
+
+# Large output / working directories (regenerate locally)
+baseline_csv/
+baseline2/
+baseline_3/
+baseline_images/
+bbox3_work/
+shake_work/
+sparrow_work/
+stash/
+stash_test/
+best/
+output/
+logs/
+data/
+新建文件夹/
+
+# Misc
+*.log

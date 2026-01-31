@@ -33,7 +33,7 @@ function New-UniquePath {
     param([string]$Path)
     if (-not (Test-Path $Path)) { return $Path }
     $dir = Split-Path -Parent $Path
-    $base = Split-Path -LeafBase $Path
+    $base = [System.IO.Path]::GetFileNameWithoutExtension($Path)
     $ext = [System.IO.Path]::GetExtension($Path)
     $ts = Get-Date -Format "yyyyMMdd_HHmmss"
     $cand = Join-Path $dir ($base + "_" + $ts + $ext)

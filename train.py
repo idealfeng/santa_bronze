@@ -1087,6 +1087,8 @@ def _sa_optimize_group(
     alpha: float,
     move_xy: float,
     move_deg: float,
+    boundary_p: float,
+    swap_p: float,
     decimals: int,
     seed: int,
     verbose: bool,
@@ -1095,6 +1097,10 @@ def _sa_optimize_group(
         return df_group
 
     decimals = max(16, int(decimals))
+    boundary_p = float(boundary_p)
+    swap_p = float(swap_p)
+    boundary_p = 0.0 if boundary_p < 0.0 else (1.0 if boundary_p > 1.0 else boundary_p)
+    swap_p = 0.0 if swap_p < 0.0 else (1.0 if swap_p > 1.0 else swap_p)
     g0 = df_group[["id", "x", "y", "deg"]].copy().reset_index(drop=True)
     x0 = _parse_s_floats(g0["x"])
     y0 = _parse_s_floats(g0["y"])
@@ -1109,6 +1115,27 @@ def _sa_optimize_group(
     # Pre-build polygons for fast overlap tests. Scaled geometry matches the metric.
     polys0 = [_tree_polygon_scaled(float(x0[i]), float(y0[i]), float(deg0[i])) for i in range(len(g0))]
 
+    def _boundary_indices(polys) -> List[int]:
+        if not polys:
+            return []
+        bounds = [p.bounds for p in polys]
+        minx = min(b[0] for b in bounds)
+        miny = min(b[1] for b in bounds)
+        maxx = max(b[2] for b in bounds)
+        maxy = max(b[3] for b in bounds)
+        span = max(maxx - minx, maxy - miny)
+        eps = max(1.0, span * 1e-9)
+        out_idx: List[int] = []
+        for i, (x0b, y0b, x1b, y1b) in enumerate(bounds):
+            if (
+                abs(x0b - minx) <= eps
+                or abs(x1b - maxx) <= eps
+                or abs(y0b - miny) <= eps
+                or abs(y1b - maxy) <= eps
+            ):
+                out_idx.append(i)
+        return out_idx
+
     for r in range(max(1, int(restarts))):
         rng = random.Random(seed + r * 1_000_003)
 
@@ -1122,66 +1149,129 @@ def _sa_optimize_group(
         t0_eff = temp
         accepted = 0
         feasible = 0
+        boundary = _boundary_indices(polys)
 
         for _step in range(int(steps)):
-            i = rng.randrange(len(g0))
+            if boundary and rng.random() < boundary_p:
+                i = boundary[rng.randrange(len(boundary))]
+            else:
+                i = rng.randrange(len(g0))
 
             # Occasional big kick helps escape a tiny local basin.
             kick = 5.0 if rng.random() < 0.02 else 1.0
             scale = max(0.15, temp / t0_eff) * kick
 
-            do_move = rng.random() < 0.85
-            do_rot = rng.random() < 0.60
-            if not (do_move or do_rot):
+            do_swap = swap_p > 0.0 and rng.random() < swap_p and len(g0) >= 2
+            do_move = (not do_swap) and (rng.random() < 0.85)
+            do_rot = (not do_swap) and (rng.random() < 0.60)
+            if (not do_swap) and not (do_move or do_rot):
                 do_move = True
 
             nx = float(x[i])
             ny = float(y[i])
             na = float(deg[i])
 
-            if do_move:
-                nx += (rng.random() * 2.0 - 1.0) * move_xy * scale
-                ny += (rng.random() * 2.0 - 1.0) * move_xy * scale
-                nx = min(XY_MAX, max(XY_MIN, nx))
-                ny = min(XY_MAX, max(XY_MIN, ny))
-            if do_rot:
-                na = (na + (rng.random() * 2.0 - 1.0) * move_deg * scale) % 360.0
+            if do_swap:
+                j = rng.randrange(len(g0) - 1)
+                if j >= i:
+                    j += 1
 
-            cand_poly = _tree_polygon_scaled(nx, ny, na)
-            ok = True
-            for j, other in enumerate(polys):
-                if j == i:
-                    continue
-                if cand_poly.intersects(other) and not cand_poly.touches(other):
+                swap_angles = rng.random() < 0.60
+
+                ox_i, oy_i, oa_i = float(x[i]), float(y[i]), float(deg[i])
+                ox_j, oy_j, oa_j = float(x[j]), float(y[j]), float(deg[j])
+
+                if swap_angles:
+                    deg[i], deg[j] = oa_j, oa_i
+                else:
+                    x[i], x[j] = ox_j, ox_i
+                    y[i], y[j] = oy_j, oy_i
+
+                cand_poly_i = _tree_polygon_scaled(float(x[i]), float(y[i]), float(deg[i]))
+                cand_poly_j = _tree_polygon_scaled(float(x[j]), float(y[j]), float(deg[j]))
+
+                ok = True
+                for k, other in enumerate(polys):
+                    if k == i or k == j:
+                        continue
+                    if cand_poly_i.intersects(other) and not cand_poly_i.touches(other):
+                        ok = False
+                        break
+                    if cand_poly_j.intersects(other) and not cand_poly_j.touches(other):
+                        ok = False
+                        break
+                if ok and (cand_poly_i.intersects(cand_poly_j) and not cand_poly_i.touches(cand_poly_j)):
                     ok = False
-                    break
-            if not ok:
-                temp *= alpha
-                continue
 
-            feasible += 1
-            ox, oy, oa = float(x[i]), float(y[i]), float(deg[i])
+                if not ok:
+                    x[i], y[i], deg[i] = ox_i, oy_i, oa_i
+                    x[j], y[j], deg[j] = ox_j, oy_j, oa_j
+                    temp *= alpha
+                    continue
 
-            x[i] = nx
-            y[i] = ny
-            deg[i] = na
-            new_side = _side_from_points(*_tree_pointcloud_xy(x, y, deg))
-            delta = new_side - cur_side
-
-            accept = delta <= 0.0 or rng.random() < math.exp(-delta / max(1e-9, temp))
-            if accept:
-                accepted += 1
-                cur_side = new_side
-                polys[i] = cand_poly
-                if cur_side < best_side:
-                    best_side = cur_side
-                    best_x = x.copy()
-                    best_y = y.copy()
-                    best_deg = deg.copy()
+                feasible += 1
+                new_side = _side_from_points(*_tree_pointcloud_xy(x, y, deg))
+                delta = new_side - cur_side
+                accept = delta <= 0.0 or rng.random() < math.exp(-delta / max(1e-9, temp))
+                if accept:
+                    accepted += 1
+                    cur_side = new_side
+                    polys[i] = cand_poly_i
+                    polys[j] = cand_poly_j
+                    boundary = _boundary_indices(polys)
+                    if cur_side < best_side:
+                        best_side = cur_side
+                        best_x = x.copy()
+                        best_y = y.copy()
+                        best_deg = deg.copy()
+                else:
+                    x[i], y[i], deg[i] = ox_i, oy_i, oa_i
+                    x[j], y[j], deg[j] = ox_j, oy_j, oa_j
             else:
-                x[i] = ox
-                y[i] = oy
-                deg[i] = oa
+                if do_move:
+                    nx += (rng.random() * 2.0 - 1.0) * move_xy * scale
+                    ny += (rng.random() * 2.0 - 1.0) * move_xy * scale
+                    nx = min(XY_MAX, max(XY_MIN, nx))
+                    ny = min(XY_MAX, max(XY_MIN, ny))
+                if do_rot:
+                    na = (na + (rng.random() * 2.0 - 1.0) * move_deg * scale) % 360.0
+
+                cand_poly = _tree_polygon_scaled(nx, ny, na)
+                ok = True
+                for j, other in enumerate(polys):
+                    if j == i:
+                        continue
+                    if cand_poly.intersects(other) and not cand_poly.touches(other):
+                        ok = False
+                        break
+                if not ok:
+                    temp *= alpha
+                    continue
+
+                feasible += 1
+                ox, oy, oa = float(x[i]), float(y[i]), float(deg[i])
+
+                x[i] = nx
+                y[i] = ny
+                deg[i] = na
+                new_side = _side_from_points(*_tree_pointcloud_xy(x, y, deg))
+                delta = new_side - cur_side
+
+                accept = delta <= 0.0 or rng.random() < math.exp(-delta / max(1e-9, temp))
+                if accept:
+                    accepted += 1
+                    cur_side = new_side
+                    polys[i] = cand_poly
+                    boundary = _boundary_indices(polys)
+                    if cur_side < best_side:
+                        best_side = cur_side
+                        best_x = x.copy()
+                        best_y = y.copy()
+                        best_deg = deg.copy()
+                else:
+                    x[i] = ox
+                    y[i] = oy
+                    deg[i] = oa
 
             temp *= alpha
 
@@ -1213,6 +1303,8 @@ def optimize_small_groups_sa(
     alpha: float,
     move_xy: float,
     move_deg: float,
+    boundary_p: float,
+    swap_p: float,
     seed: int,
     decimals: int,
     fix_direction: bool,
@@ -1257,6 +1349,8 @@ def optimize_small_groups_sa(
             alpha=alpha,
             move_xy=move_xy,
             move_deg=move_deg,
+            boundary_p=boundary_p,
+            swap_p=swap_p,
             decimals=decimals,
             seed=seed + g * 10_000,
             verbose=verbose,
@@ -1770,6 +1864,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=8.0,
         help="Max rotation delta (degrees) for a move (default 8.0).",
     )
+    parser.add_argument(
+        "--opt-small-boundary-p",
+        type=float,
+        default=0.75,
+        help="With --opt-small-in, probability of selecting a boundary-contributing tree for a move (default 0.75).",
+    )
+    parser.add_argument(
+        "--opt-small-swap-p",
+        type=float,
+        default=0.25,
+        help="With --opt-small-in, probability of using a non-local swap move (swap angles or swap positions) (default 0.25).",
+    )
     parser.add_argument("--opt-small-quiet", action="store_true", help="Reduce SA logging.")
     args = parser.parse_args(argv)
 
@@ -1880,6 +1986,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             alpha=float(args.opt_small_alpha),
             move_xy=float(args.opt_small_move_xy),
             move_deg=float(args.opt_small_move_deg),
+            boundary_p=float(args.opt_small_boundary_p),
+            swap_p=float(args.opt_small_swap_p),
             seed=int(args.seed),
             decimals=int(args.decimals),
             fix_direction=bool(args.fix_direction),

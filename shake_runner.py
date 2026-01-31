@@ -59,10 +59,28 @@ def _detect_wsl_distro(prefer: Optional[str]) -> Optional[str]:
     if prefer:
         return str(prefer)
     try:
-        res = subprocess.run(["wsl", "-l", "-q"], capture_output=True, text=True, timeout=10)
+        # On some Windows setups, `wsl -l -q` returns UTF-16LE bytes (embedded NULs),
+        # which will break subprocess argument parsing if passed through as-is.
+        res = subprocess.run(["wsl", "-l", "-q"], capture_output=True, text=False, timeout=10)
     except Exception:
         return None
-    names = [ln.strip() for ln in (res.stdout or "").splitlines() if ln.strip()]
+    raw = res.stdout or b""
+    if b"\x00" in raw:
+        txt = raw.decode("utf-16-le", errors="ignore")
+    else:
+        try:
+            txt = raw.decode("utf-8", errors="ignore")
+        except Exception:
+            txt = raw.decode(errors="ignore")
+    names = []
+    for ln in txt.splitlines():
+        ln = ln.strip().strip("\x00")
+        if not ln:
+            continue
+        # Ignore warnings/noise that can appear in some environments.
+        if ln.lower().startswith("wsl:"):
+            continue
+        names.append(ln)
     if not names:
         return None
     for n in names:

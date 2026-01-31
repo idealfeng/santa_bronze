@@ -12,6 +12,14 @@ param(
     [int]$BboxRounds = 5000,
     [int]$BboxTimeoutSec = 1200,
     [int]$Decimals = 16,
+    [switch]$DeletePropagate = $false,
+    [switch]$InsertPropagate = $false,
+    [int]$InsertPropagateNmax = 60,
+    [int]$InsertPropagateTopK = 5,
+    [int]$StashEvery = 0,
+    [int]$StashKeep = 200,
+    [double]$StashMinImprove = 1e-10,
+    [string]$StashRoot = "",
     [switch]$SkipShake = $false,
     [switch]$SkipBbox3 = $false,
     [switch]$NoTagOutputs = $false,
@@ -157,7 +165,15 @@ if (-not $SkipBbox3) {
         -TotalThreads $TotalThreads `
         -Rounds $BboxRounds `
         -TimeoutSec $BboxTimeoutSec `
-        -Decimals $Decimals
+        -Decimals $Decimals `
+        -DeletePropagate:$DeletePropagate `
+        -InsertPropagate:$InsertPropagate `
+        -InsertPropagateNmax $InsertPropagateNmax `
+        -InsertPropagateTopK $InsertPropagateTopK `
+        -StashEvery $StashEvery `
+        -StashKeep $StashKeep `
+        -StashMinImprove $StashMinImprove `
+        -StashRoot $StashRoot
 } else {
     Write-Host "BBox3 skipped."
 }

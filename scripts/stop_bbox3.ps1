@@ -1,7 +1,8 @@
 param(
     [string]$Python = $env:SANTA_PYTHON,
     [int]$KillTimeoutSec = 5,
-    [switch]$SkipSave = $false
+    [switch]$SkipSave = $false,
+    [string]$PidFile = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,7 +28,14 @@ New-Item -ItemType Directory -Force -Path (Join-Path $ProjectDir "best") | Out-N
 New-Item -ItemType Directory -Force -Path (Join-Path $ProjectDir "best\\history") | Out-Null
 
 $train = Join-Path $ProjectDir "train.py"
-$pidFile = Join-Path $ProjectDir "bbox3_work\\latest_pids.tsv"
+$pidFile = $PidFile
+if (-not $pidFile -or $pidFile.Trim().Length -eq 0) {
+    $pidFile = Join-Path $ProjectDir "bbox3_work\\latest_pids.tsv"
+}
+if (-not (Test-Path $pidFile)) {
+    $pidFile2 = Join-Path $ProjectDir $pidFile
+    if (Test-Path $pidFile2) { $pidFile = $pidFile2 }
+}
 
 function Get-ScoreFromCsv {
     param([string]$Path)
@@ -141,7 +149,8 @@ try {
 } catch {}
 
 if ($procs.Count -gt 0) {
-    Write-Host ("Stopping bbox3_runner processes: " + ($procs | ForEach-Object { $_.ProcessId } | Sort-Object | ForEach-Object { $_.ToString() } -join ", "))
+    $pidList = (($procs | ForEach-Object { $_.ProcessId } | Sort-Object | ForEach-Object { $_.ToString() }) -join ", ")
+    Write-Host ("Stopping bbox3_runner processes: " + $pidList)
     foreach ($p in $procs) {
         try { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
     }
